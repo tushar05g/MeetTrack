@@ -45,6 +45,17 @@ class Meeting(Base):
 
     transcript = relationship("Transcript", back_populates="meeting", uselist=False)
     tasks = relationship("Task", back_populates="meeting")
+    participants = relationship("MeetingParticipant", back_populates="meeting")
+
+class MeetingParticipant(Base):
+    __tablename__ = "meeting_participants"
+
+    id = Column(Integer, primary_key=True, index=True)
+    meeting_id = Column(Integer, ForeignKey("meetings.id"))
+    name = Column(String)
+    email = Column(String)
+
+    meeting = relationship("Meeting", back_populates="participants")
 
 class Transcript(Base):
     __tablename__ = "transcripts"

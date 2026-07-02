@@ -8,11 +8,9 @@ from sqlalchemy import desc
 from app.database import SessionLocal
 from app.models import Meeting, MeetingStatus, Task, TaskStatus, Transcript
 from app.worker import process_meeting
+import csv
+import io
 from pydantic import BaseModel
-
-class BotJoinRequest(BaseModel):
-    meet_url: str
-    duration_seconds: int = 60
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
 
@@ -27,21 +25,46 @@ def get_db():
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads")
 
 @router.post("/bot/join")
-def join_bot(request: BotJoinRequest, db: Session = Depends(get_db)):
-    if not request.meet_url:
+def join_bot(
+    meet_url: str = Form(...),
+    duration_seconds: int = Form(60),
+    participants_csv: UploadFile = File(None),
+    db: Session = Depends(get_db)
+):
+    if not meet_url:
         raise HTTPException(status_code=400, detail="Missing Google Meet URL")
     
     meeting = Meeting(
-        title=f"Live Meeting: {request.meet_url.split('/')[-1]}",
+        title=f"Live Meeting: {meet_url.split('/')[-1]}",
         audio_file_path="", 
         status=MeetingStatus.pending
     )
     db.add(meeting)
     db.commit()
     db.refresh(meeting)
+
+    # Process CSV if provided
+    if participants_csv:
+        content = participants_csv.file.read().decode("utf-8")
+        reader = csv.DictReader(io.StringIO(content))
+        
+        # Try to find name and email columns gracefully
+        fieldnames = [f.lower().strip() for f in (reader.fieldnames or [])]
+        name_col = next((f for f in reader.fieldnames if f.lower().strip() in ["name", "full name", "participant"]), None)
+        email_col = next((f for f in reader.fieldnames if f.lower().strip() in ["email", "e-mail", "email address"]), None)
+
+        from app.models import MeetingParticipant
+        if name_col and email_col:
+            for row in reader:
+                name = row.get(name_col, "").strip()
+                email = row.get(email_col, "").strip()
+                if name and email:
+                    mp = MeetingParticipant(meeting_id=meeting.id, name=name, email=email)
+                    db.add(mp)
+            db.commit()
     
     from app.worker import run_bot_and_process
-    run_bot_and_process.delay(meeting.id, request.meet_url, request.duration_seconds)
+    run_bot_and_process.delay(meeting.id, meet_url, duration_seconds)
     
     return {"message": "Bot dispatched to meeting", "meeting_id": meeting.id}
 

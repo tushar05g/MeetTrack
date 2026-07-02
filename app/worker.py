@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import subprocess
+import traceback
 from datetime import datetime, date
 from celery import Celery
 from celery.schedules import crontab
@@ -78,6 +79,7 @@ def run_bot_and_process(meeting_id: int, meet_url: str, duration_seconds: int = 
 
     except Exception as e:
         print(f"Error running bot: {e}")
+        traceback.print_exc()
         meeting.status = MeetingStatus.failed
         db.commit()
     finally:
@@ -100,11 +102,42 @@ def process_meeting(self, meeting_id: int, bot_participants: str = None):
         print("[STEP 1] Transcribing audio...")
         raw_segments = transcribe_audio(meeting.audio_file_path)
 
+        if not raw_segments:
+            print("[STEP 1] No speech detected in audio (silent meeting). Marking as done.")
+            # Save empty transcript so the meeting record is complete
+            transcript = Transcript(meeting_id=meeting.id, full_text="[No speech detected]", segments=[])
+            db.add(transcript)
+            meeting.status = MeetingStatus.done
+            db.commit()
+            return
+
         # Step 2: Diarize
         print("[STEP 2] Diarizing audio...")
-        diarized_segments = diarize_audio(meeting.audio_file_path, raw_segments)
-        
-        full_text = "\\n".join([f"[{seg['start']:.2f}s - {seg['end']:.2f}s] {seg['speaker']}: {seg['text']}" for seg in diarized_segments])
+        try:
+            diarized_segments = diarize_audio(meeting.audio_file_path, raw_segments)
+        except Exception as diarize_err:
+            print(f"[STEP 2] Diarization failed ({diarize_err}), falling back to raw transcription without speaker labels.")
+            traceback.print_exc()
+            # Fall back: add a default speaker label to raw segments
+            diarized_segments = [
+                {**seg, "speaker": seg.get("speaker", "SPEAKER_00")}
+                for seg in raw_segments
+            ]
+
+        # Normalize segments — guard against missing keys
+        full_text = "\n".join([
+            f"[{seg.get('start', 0):.2f}s - {seg.get('end', 0):.2f}s] {seg.get('speaker', 'SPEAKER_00')}: {seg.get('text', '').strip()}"
+            for seg in diarized_segments
+            if seg.get('text', '').strip()  # skip empty/silent segments
+        ])
+
+        if not full_text.strip():
+            print("[STEP 2] Transcript is empty after diarization (all silent segments). Marking as done.")
+            transcript = Transcript(meeting_id=meeting.id, full_text="[No speech detected]", segments=diarized_segments)
+            db.add(transcript)
+            meeting.status = MeetingStatus.done
+            db.commit()
+            return
 
         meeting.status = MeetingStatus.extracting
         db.commit()
@@ -117,16 +150,23 @@ def process_meeting(self, meeting_id: int, bot_participants: str = None):
         db.add(transcript)
         db.commit()
 
-        # Fetch users for context
-        users = db.query(User).all()
-        users_list = ", ".join([f"{u.name} ({u.email})" for u in users]) if users else "None configured"
+        # Fetch users for context. Priority: Meeting specific (CSV/Calendar) -> Global Users
+        global_users = db.query(User).all()
+        lookup_users = meeting.participants if meeting.participants else global_users
+        users_list = ", ".join([f"{u.name} ({u.email})" for u in lookup_users]) if lookup_users else "None configured"
         
         if bot_participants:
             users_list += f"\nLive participants scraped by bot: {bot_participants}"
 
         # Step 3: Extract Tasks
         print("[STEP 3] Extracting tasks...")
-        parsed_tasks = extract_tasks_from_transcript(diarized_segments, meeting.recorded_date.isoformat(), users_list)
+        meeting_date_str = meeting.recorded_date.isoformat() if meeting.recorded_date else date.today().isoformat()
+        try:
+            parsed_tasks = extract_tasks_from_transcript(diarized_segments, meeting_date_str, users_list)
+        except Exception as extract_err:
+            print(f"[STEP 3] Task extraction failed ({extract_err}), continuing with no tasks.")
+            traceback.print_exc()
+            parsed_tasks = []
         
         if isinstance(parsed_tasks, dict):
             if "task" in parsed_tasks:
@@ -157,7 +197,7 @@ def process_meeting(self, meeting_id: int, bot_participants: str = None):
             if owner_email:
                 assigned_user = db.query(User).filter(User.email == owner_email).first()
             if not assigned_user:
-                for u in users:
+                for u in global_users:
                     if u.name and u.name.lower() in owner_label.lower():
                         assigned_user = u
                         break
@@ -174,7 +214,7 @@ def process_meeting(self, meeting_id: int, bot_participants: str = None):
             db.refresh(new_task)
 
             # Group for emails
-            email_address = assigned_user.email if assigned_user else MOCK_USER_MAPPING.get(owner_label, "unknown@example.com")
+            email_address = owner_email or (assigned_user.email if assigned_user else "kirito@yopmail.com")
             if email_address not in assigned_tasks_per_user:
                 assigned_tasks_per_user[email_address] = []
             assigned_tasks_per_user[email_address].append(new_task)
@@ -182,8 +222,6 @@ def process_meeting(self, meeting_id: int, bot_participants: str = None):
         # Step 4: Send Initial Emails
         print("[STEP 4] Sending Initial Emails...")
         for email_addr, user_tasks in assigned_tasks_per_user.items():
-            if email_addr == "unknown@example.com":
-                continue
                 
             body = f"Hello!\n\nYou have been assigned new action items from '{meeting.title}':\n\n"
             for t in user_tasks:
@@ -203,10 +241,15 @@ def process_meeting(self, meeting_id: int, bot_participants: str = None):
 
         print(f"--- Processing Complete for Meeting {meeting.id} ---")
 
+
     except Exception as e:
-        print(f"Error processing meeting {meeting_id}: {str(e)}")
-        meeting.status = MeetingStatus.failed
-        db.commit()
+        print(f"[ERROR] Failed to process meeting {meeting_id}: {e}")
+        traceback.print_exc()
+        
+        # Mark as failed
+        if 'meeting' in locals() and meeting:
+            meeting.status = MeetingStatus.failed
+            db.commit()
         raise e
     finally:
         db.close()
@@ -231,9 +274,14 @@ def check_overdue_tasks():
         # In a real app we'd group by owner_id, but here we just map by hardcoded speaker label logic
         # For simplicity in this demo, we'll just mock the sending for each overdue task.
         for t in overdue_tasks:
-            # We don't have owner mapping natively connected to Task yet due to lack of User IDs,
-            # so we'll just send to a generic address for demonstration
-            owner_email = "kirito@yopmail.com" 
+            if t.owner:
+                owner_email = t.owner.email
+            else:
+                owner_email = None
+                
+            if not owner_email:
+                print(f"[OVERDUE] Task '{t.description}' has no owner email, skipping.")
+                continue
             
             subject = "OVERDUE TASK REMINDER"
             body = f"Hello,\n\nThis is an automated reminder that your task is overdue:\n\nTask: {t.description}\nDeadline: {t.deadline}\n\nPlease update the status as soon as possible."

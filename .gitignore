@@ -27,3 +27,4 @@ bot/node_modules/
 frontend/node_modules/
 *.webm
 *.wav
+token.json

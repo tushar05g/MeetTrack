@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.routes import meetings, tasks
+from app.api.routes import meetings, tasks, calendar
 
 app = FastAPI(title="MeetTrack API")
 
@@ -16,6 +16,7 @@ app.add_middleware(
 # Include Routers
 app.include_router(meetings.router)
 app.include_router(tasks.router)
+app.include_router(calendar.router)
 
 @app.get("/")
 def health_check():

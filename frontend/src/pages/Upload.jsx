@@ -14,6 +14,8 @@ export default function Upload() {
     const [meetUrl, setMeetUrl] = useState('');
     const [botDuration, setBotDuration] = useState(60);
     const [botStatus, setBotStatus] = useState('idle');
+    const [csvFile, setCsvFile] = useState(null);
+    const [fetchedAttendees, setFetchedAttendees] = useState([]);
 
     const handleFileChange = (e) => {
         if (e.target.files && e.target.files.length > 0) {
@@ -56,10 +58,17 @@ export default function Upload() {
         if (!meetUrl) return;
 
         setBotStatus('dispatching');
+        
+        const formData = new FormData();
+        formData.append('meet_url', meetUrl);
+        formData.append('duration_seconds', botDuration);
+        if (csvFile) {
+            formData.append('participants_csv', csvFile);
+        }
+
         try {
-            const res = await api.post('/meetings/bot/join', {
-                meet_url: meetUrl,
-                duration_seconds: parseInt(botDuration)
+            const res = await api.post('/meetings/bot/join', formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
             });
             setMeetingId(res.data.meeting_id);
             setStatus('pending'); 
@@ -69,6 +78,26 @@ export default function Upload() {
             console.error(err);
             setBotStatus('idle');
             alert('Bot dispatch failed: ' + err.message);
+        }
+    };
+
+    const handleFetchCalendar = async () => {
+        try {
+            const res = await api.get('/calendar/fetch_upcoming');
+            if (res.data.status === 'missing_credentials') {
+                alert(res.data.instructions);
+                return;
+            }
+            if (res.data.status === 'error') {
+                alert(res.data.message);
+                return;
+            }
+            if (res.data.meet_url) {
+                setMeetUrl(res.data.meet_url);
+                setFetchedAttendees(res.data.attendees || []);
+            }
+        } catch (err) {
+            alert('Failed to fetch from calendar');
         }
     };
 
@@ -168,13 +197,42 @@ export default function Upload() {
                                 required
                             />
                         </div>
-                        <div style={{ marginBottom: '1.5rem' }}>
-                            <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>Record Duration (seconds, for testing):</label>
+                        <div style={{ marginBottom: '1.5rem', display: 'flex', gap: '1rem', justifyContent: 'center' }}>
+                            <button type="button" className="btn btn-secondary" onClick={() => window.location.href = 'http://localhost:8000/calendar/auth'}>
+                                Connect Google Calendar
+                            </button>
+                            <button type="button" className="btn btn-secondary" onClick={handleFetchCalendar}>
+                                Fetch from Calendar (Auto-fill)
+                            </button>
+                        </div>
+
+                        {fetchedAttendees.length > 0 && (
+                            <div style={{ marginBottom: '1.5rem', textAlign: 'left', background: 'rgba(255,255,255,0.03)', padding: '1rem', borderRadius: '8px' }}>
+                                <h4 style={{ marginTop: 0, marginBottom: '0.5rem' }}>Fetched Attendees ({fetchedAttendees.length})</h4>
+                                <ul style={{ margin: 0, paddingLeft: '1.2rem', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                                    {fetchedAttendees.map((a, i) => (
+                                        <li key={i}>{a.name} ({a.email})</li>
+                                    ))}
+                                </ul>
+                            </div>
+                        )}
+                        
+                        <div style={{ marginTop: '1.5rem', textAlign: 'center' }}>
+                            <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>Record Duration (seconds):</label>
                             <input 
                                 type="number" 
                                 value={botDuration}
                                 onChange={(e) => setBotDuration(e.target.value)}
                                 style={{ padding: '0.5rem', width: '100px', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}
+                            />
+                        </div>
+                        <div style={{ marginBottom: '1.5rem', border: '1px dashed var(--border-color)', padding: '1rem', borderRadius: '8px' }}>
+                            <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>Optional: Upload Participants CSV (columns: Name, Email)</label>
+                            <input 
+                                type="file" 
+                                accept=".csv"
+                                onChange={(e) => setCsvFile(e.target.files[0])}
+                                style={{ color: 'var(--text-primary)' }}
                             />
                         </div>
                         <button type="submit" className="btn btn-primary" disabled={botStatus === 'dispatching'}>

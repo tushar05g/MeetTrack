@@ -28,31 +28,43 @@ def extract_tasks_from_transcript(segments, meeting_date, users_list):
     transcript_text = format_transcript(segments)
     
     prompt = f"""
-    You are an AI assistant that extracts action items, commitments, or assigned tasks from meeting transcripts.
+    You are an AI assistant that extracts action items and assigned tasks from meeting transcripts.
     
     Context:
-    - The meeting took place on: {meeting_date}
-    - The available team members are: {users_list}
+    - Meeting date: {meeting_date}
+    - Available participants (name → email lookup table): {users_list}
     
     Here is the diarized meeting transcript:
     ---
     {transcript_text}
     ---
     
-    Identify all action items mentioned. 
+    Identify all action items mentioned in the transcript.
     
     CRITICAL INSTRUCTIONS:
-    1. DEDUPLICATE: If multiple people discuss the same task (e.g. someone proposes a task, someone else accepts it, and they set a deadline), merge this into a SINGLE task. Do NOT create multiple tasks for the same discussion.
-    2. ACCURATE DEADLINES: If a timeframe is mentioned (e.g. "by Friday", "tomorrow"), calculate the exact date and time in YYYY-MM-DD HH:MM:SS format based on the Meeting Date ({meeting_date}). If a time of day is mentioned (e.g. "morning" -> 09:00:00, "afternoon" -> 14:00:00, "evening" -> 18:00:00), use that. If no specific time of day is mentioned, default to End of Day (23:59:59).
-    3. ASSIGNMENT: Try to identify the real name of the owner from the transcript or the available team members list. If unknown, use the speaker label (e.g. "SPEAKER_00").
-    4. EMPTY STATE: If there are absolutely no action items, return an empty JSON array []. Do not hallucinate.
-
-    Return ONLY a valid JSON array of objects. Do not include markdown formatting, backticks, or any other text before or after the JSON.
-    Example output format:
-    [
-      {{"task": "Draft the quarterly report", "owner": "Tushar", "owner_email": "tushar@chicmicstudios.in", "deadline": "2026-07-10 23:59:59"}},
-      {{"task": "Send the design files", "owner": "SPEAKER_00", "owner_email": null, "deadline": null}}
-    ]
+    1. DEDUPLICATE: Merge discussions of the same task into ONE task. Do NOT create multiple tasks for the same discussion.
+    
+    2. ACCURATE DEADLINES: Calculate exact dates from relative phrases ("by Friday", "tomorrow") based on meeting date ({meeting_date}).
+       Use format: YYYY-MM-DD HH:MM:SS. Default time: 23:59:59. Morning→09:00, Afternoon→14:00, Evening→18:00.
+    
+    3. OWNER IDENTIFICATION (most important):
+       - When a name is mentioned in the transcript (e.g. "Tushar, can you..." or "Alice will handle..."),
+         look that name up in the registered team members list above.
+       - Set "owner" to their name and "owner_email" to their email from the lookup table.
+       - Names in the transcript may be first names only — match them to the full name in the lookup table.
+       - If the owner spoke in first person ("I will do X"), use the speaker label + context to identify who that is.
+       - If you cannot identify a real name, use the speaker label (e.g. "SPEAKER_00") and set owner_email to null.
+    
+    4. EMPTY STATE: If there are no action items, return an empty tasks array. Do NOT hallucinate tasks.
+    
+    Return ONLY a valid JSON object with key "tasks" containing an array. No markdown, no backticks.
+    Example:
+    {{
+      "tasks": [
+        {{"task": "Send the quarterly report", "owner": "Tushar", "owner_email": "tushar@example.com", "deadline": "2026-07-10 23:59:59"}},
+        {{"task": "Review the design", "owner": "SPEAKER_01", "owner_email": null, "deadline": null}}
+      ]
+    }}
     """
 
     payload = {
@@ -62,9 +74,8 @@ def extract_tasks_from_transcript(segments, meeting_date, users_list):
         "response_format": {"type": "json_object"}
     }
     
-    # We wrap the array in an object for Groq JSON mode compliance, then extract it.
-    payload["messages"][0]["content"] += "\nWrap your array in a JSON object with a single key 'tasks'. Example: {\"tasks\": [...]}"
-    
+    # Note: prompt already instructs the model to return {"tasks": [...]}
+
     headers = {
         "Authorization": f"Bearer {os.getenv('GROQ_API_KEY')}",
         "Content-Type": "application/json"
