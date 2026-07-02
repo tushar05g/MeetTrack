@@ -5,9 +5,15 @@ import { UploadCloud, Hourglass, Mic, Wand2, CheckCircle2, RefreshCw, XCircle } 
 
 export default function Upload() {
     const [file, setFile] = useState(null);
+    const [recordedDate, setRecordedDate] = useState(new Date().toISOString().split('T')[0]);
     const [status, setStatus] = useState('idle'); // idle, uploading, pending, transcribing, extracting, done, failed
     const [meetingId, setMeetingId] = useState(null);
     const fileInputRef = useRef(null);
+
+    const [activeTab, setActiveTab] = useState('upload'); // 'upload' or 'bot'
+    const [meetUrl, setMeetUrl] = useState('');
+    const [botDuration, setBotDuration] = useState(60);
+    const [botStatus, setBotStatus] = useState('idle');
 
     const handleFileChange = (e) => {
         if (e.target.files && e.target.files.length > 0) {
@@ -29,6 +35,7 @@ export default function Upload() {
         setStatus('uploading');
         const formData = new FormData();
         formData.append('file', file);
+        formData.append('recorded_date', recordedDate);
 
         try {
             const res = await api.post('/meetings/upload', formData, {
@@ -41,6 +48,27 @@ export default function Upload() {
             console.error(err);
             setStatus('idle');
             alert('Upload failed: ' + err.message);
+        }
+    };
+
+    const handleBotSubmit = async (e) => {
+        e.preventDefault();
+        if (!meetUrl) return;
+
+        setBotStatus('dispatching');
+        try {
+            const res = await api.post('/meetings/bot/join', {
+                meet_url: meetUrl,
+                duration_seconds: parseInt(botDuration)
+            });
+            setMeetingId(res.data.meeting_id);
+            setStatus('pending'); 
+            setActiveTab('upload'); 
+            pollStatus(res.data.meeting_id);
+        } catch (err) {
+            console.error(err);
+            setBotStatus('idle');
+            alert('Bot dispatch failed: ' + err.message);
         }
     };
 
@@ -64,12 +92,28 @@ export default function Upload() {
 
     return (
         <div className="animate-fade-in delay-1" style={{ maxWidth: '800px', margin: '0 auto' }}>
-            <h1>Upload Meeting</h1>
-            <p>Upload an audio or video recording to begin processing.</p>
+            <h1>Process Meeting</h1>
+            <p>Upload a recording or send our Bot to a live Google Meet.</p>
 
-            <div className="glass-panel" style={{ marginTop: '2rem' }}>
+            <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem', justifyContent: 'center' }}>
+                <button 
+                    className={`btn ${activeTab === 'upload' ? 'btn-primary' : 'btn-secondary'}`}
+                    onClick={() => setActiveTab('upload')}
+                >
+                    Upload File
+                </button>
+                <button 
+                    className={`btn ${activeTab === 'bot' ? 'btn-primary' : 'btn-secondary'}`}
+                    onClick={() => setActiveTab('bot')}
+                >
+                    Send Live Bot
+                </button>
+            </div>
+
+            <div className="glass-panel" style={{ marginTop: '1rem' }}>
                 {status === 'idle' || status === 'uploading' ? (
-                    <form onSubmit={handleSubmit}>
+                    activeTab === 'upload' ? (
+                        <form onSubmit={handleSubmit}>
                         <div 
                             className="upload-area" 
                             onDrop={handleDrop} 
@@ -89,6 +133,16 @@ export default function Upload() {
                             />
                         </div>
                         
+                        <div style={{ marginTop: '1.5rem', textAlign: 'center' }}>
+                            <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500, color: 'var(--text-secondary)' }}>Meeting Date:</label>
+                            <input 
+                                type="date" 
+                                value={recordedDate} 
+                                onChange={(e) => setRecordedDate(e.target.value)}
+                                style={{ padding: '0.5rem 1rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', outline: 'none', minWidth: '200px' }}
+                            />
+                        </div>
+
                         {file && (
                             <div style={{ marginTop: '1.5rem', textAlign: 'center' }}>
                                 <p style={{ fontWeight: 500, color: 'var(--text-primary)' }}>
@@ -101,6 +155,34 @@ export default function Upload() {
                             </div>
                         )}
                     </form>
+                    ) : (
+                    <form onSubmit={handleBotSubmit} style={{ textAlign: 'center' }}>
+                        <h3 style={{ marginBottom: '1rem' }}>Send Bot to Google Meet</h3>
+                        <div style={{ marginBottom: '1rem' }}>
+                            <input 
+                                type="url" 
+                                placeholder="https://meet.google.com/xxx-xxxx-xxx"
+                                value={meetUrl}
+                                onChange={(e) => setMeetUrl(e.target.value)}
+                                style={{ padding: '0.75rem', width: '80%', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}
+                                required
+                            />
+                        </div>
+                        <div style={{ marginBottom: '1.5rem' }}>
+                            <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>Record Duration (seconds, for testing):</label>
+                            <input 
+                                type="number" 
+                                value={botDuration}
+                                onChange={(e) => setBotDuration(e.target.value)}
+                                style={{ padding: '0.5rem', width: '100px', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}
+                            />
+                        </div>
+                        <button type="submit" className="btn btn-primary" disabled={botStatus === 'dispatching'}>
+                            {botStatus === 'dispatching' ? <RefreshCw className="spin" /> : <Wand2 />} 
+                            {botStatus === 'dispatching' ? ' Dispatching...' : ' Dispatch Bot'}
+                        </button>
+                    </form>
+                    )
                 ) : (
                     <div style={{ paddingTop: '2rem' }}>
                         <h3 style={{ textAlign: 'center', marginBottom: '1.5rem' }}>Processing Status</h3>
@@ -137,8 +219,8 @@ export default function Upload() {
                                 </Link>
                             )}
                             {(status === 'done' || status === 'failed') && (
-                                <button className="btn btn-secondary" style={{ marginLeft: '1rem' }} onClick={() => { setStatus('idle'); setFile(null); }}>
-                                    Upload Another
+                                <button className="btn btn-secondary" style={{ marginLeft: '1rem' }} onClick={() => { setStatus('idle'); setBotStatus('idle'); setFile(null); }}>
+                                    Process Another
                                 </button>
                             )}
                         </div>

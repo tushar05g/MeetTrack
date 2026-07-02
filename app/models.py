@@ -1,5 +1,5 @@
-from datetime import datetime
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Text, Enum
+from datetime import datetime, date
+from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Text, Enum, Date
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 import enum
@@ -41,6 +41,7 @@ class Meeting(Base):
     audio_file_path = Column(String)
     status = Column(Enum(MeetingStatus), default=MeetingStatus.pending)
     created_at = Column(DateTime, default=datetime.utcnow)
+    recorded_date = Column(Date, default=date.today)
 
     transcript = relationship("Transcript", back_populates="meeting", uselist=False)
     tasks = relationship("Task", back_populates="meeting")

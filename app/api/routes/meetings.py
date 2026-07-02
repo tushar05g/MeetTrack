@@ -1,6 +1,7 @@
 import os
 import shutil
-from fastapi import APIRouter, Depends, File, UploadFile, HTTPException
+from fastapi import APIRouter, Depends, File, UploadFile, Form, HTTPException
+from datetime import date
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
@@ -8,6 +9,10 @@ from app.database import SessionLocal
 from app.models import Meeting, MeetingStatus, Task, TaskStatus, Transcript
 from app.worker import process_meeting
 from pydantic import BaseModel
+
+class BotJoinRequest(BaseModel):
+    meet_url: str
+    duration_seconds: int = 60
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
 
@@ -21,8 +26,31 @@ def get_db():
 
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads")
 
+@router.post("/bot/join")
+def join_bot(request: BotJoinRequest, db: Session = Depends(get_db)):
+    if not request.meet_url:
+        raise HTTPException(status_code=400, detail="Missing Google Meet URL")
+    
+    meeting = Meeting(
+        title=f"Live Meeting: {request.meet_url.split('/')[-1]}",
+        audio_file_path="", 
+        status=MeetingStatus.pending
+    )
+    db.add(meeting)
+    db.commit()
+    db.refresh(meeting)
+    
+    from app.worker import run_bot_and_process
+    run_bot_and_process.delay(meeting.id, request.meet_url, request.duration_seconds)
+    
+    return {"message": "Bot dispatched to meeting", "meeting_id": meeting.id}
+
 @router.post("/upload")
-async def upload_meeting(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def upload_meeting(
+    file: UploadFile = File(...), 
+    recorded_date: date = Form(default_factory=date.today),
+    db: Session = Depends(get_db)
+):
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file uploaded")
     
@@ -39,6 +67,7 @@ async def upload_meeting(file: UploadFile = File(...), db: Session = Depends(get
     meeting = Meeting(
         title=file.filename,
         audio_file_path=file_path,
+        recorded_date=recorded_date,
         status=MeetingStatus.pending
     )
     db.add(meeting)

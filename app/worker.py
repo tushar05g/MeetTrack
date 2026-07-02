@@ -1,12 +1,13 @@
 import os
 import sys
 import json
+import subprocess
 from datetime import datetime, date
 from celery import Celery
 from celery.schedules import crontab
 
 from app.database import SessionLocal
-from app.models import Meeting, MeetingStatus, Transcript, Task, TaskStatus, TaskFollowup, FollowupType
+from app.models import Meeting, MeetingStatus, Transcript, Task, TaskStatus, TaskFollowup, FollowupType, User
 from app.email_utils import send_email
 
 # Import Phase 1 AI pipeline components
@@ -34,8 +35,56 @@ MOCK_USER_MAPPING = {
     "SPEAKER_01": "colleague@example.com"
 }
 
+@celery_app.task(name="run_bot_and_process")
+def run_bot_and_process(meeting_id: int, meet_url: str, duration_seconds: int = 60):
+    db = SessionLocal()
+    try:
+        meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
+        if not meeting:
+            return
+
+        bot_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "bot")
+        output_audio = os.path.join(os.path.dirname(os.path.dirname(__file__)), "app", "uploads", f"bot_meeting_{meeting.id}.webm")
+        output_json = os.path.join(os.path.dirname(os.path.dirname(__file__)), "app", "uploads", f"bot_meeting_{meeting.id}.json")
+        
+        print(f"[BOT DISPATCH] Spawning Node.js bot for {meet_url}...")
+        
+        result = subprocess.run([
+            "node", "bot.js", meet_url, output_audio, output_json, str(duration_seconds)
+        ], cwd=bot_dir, capture_output=True, text=True)
+        
+        print("[BOT LOGS]\n", result.stdout)
+        if result.stderr:
+            print("[BOT ERROR LOGS]\n", result.stderr)
+
+        if not os.path.exists(output_audio):
+            print("Bot failed to produce audio file!")
+            meeting.status = MeetingStatus.failed
+            db.commit()
+            return
+            
+        meeting.audio_file_path = output_audio
+        db.commit()
+        
+        participants_list = None
+        if os.path.exists(output_json):
+            with open(output_json, "r") as f:
+                parts = json.load(f)
+                if parts:
+                    participants_list = ", ".join(parts)
+        
+        db.close()
+        process_meeting.delay(meeting_id, bot_participants=participants_list)
+
+    except Exception as e:
+        print(f"Error running bot: {e}")
+        meeting.status = MeetingStatus.failed
+        db.commit()
+    finally:
+        db.close()
+
 @celery_app.task(name="process_meeting", bind=True)
-def process_meeting(self, meeting_id: int):
+def process_meeting(self, meeting_id: int, bot_participants: str = None):
     db = SessionLocal()
     try:
         meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
@@ -68,9 +117,16 @@ def process_meeting(self, meeting_id: int):
         db.add(transcript)
         db.commit()
 
+        # Fetch users for context
+        users = db.query(User).all()
+        users_list = ", ".join([f"{u.name} ({u.email})" for u in users]) if users else "None configured"
+        
+        if bot_participants:
+            users_list += f"\nLive participants scraped by bot: {bot_participants}"
+
         # Step 3: Extract Tasks
         print("[STEP 3] Extracting tasks...")
-        parsed_tasks = extract_tasks_from_transcript(diarized_segments)
+        parsed_tasks = extract_tasks_from_transcript(diarized_segments, meeting.recorded_date.isoformat(), users_list)
         
         if isinstance(parsed_tasks, dict):
             if "task" in parsed_tasks:
@@ -93,9 +149,22 @@ def process_meeting(self, meeting_id: int):
         for t in parsed_tasks:
             if not isinstance(t, dict):
                 continue
+            
             owner_label = t.get("owner", "Unknown")
+            owner_email = t.get("owner_email")
+            assigned_user = None
+
+            if owner_email:
+                assigned_user = db.query(User).filter(User.email == owner_email).first()
+            if not assigned_user:
+                for u in users:
+                    if u.name and u.name.lower() in owner_label.lower():
+                        assigned_user = u
+                        break
+
             new_task = Task(
                 meeting_id=meeting.id,
+                owner_id=assigned_user.id if assigned_user else None,
                 description=t.get("task", ""),
                 deadline=t.get("deadline"),
                 status=TaskStatus.pending
@@ -105,7 +174,7 @@ def process_meeting(self, meeting_id: int):
             db.refresh(new_task)
 
             # Group for emails
-            email_address = MOCK_USER_MAPPING.get(owner_label, "unknown@example.com")
+            email_address = assigned_user.email if assigned_user else MOCK_USER_MAPPING.get(owner_label, "unknown@example.com")
             if email_address not in assigned_tasks_per_user:
                 assigned_tasks_per_user[email_address] = []
             assigned_tasks_per_user[email_address].append(new_task)
@@ -116,10 +185,10 @@ def process_meeting(self, meeting_id: int):
             if email_addr == "unknown@example.com":
                 continue
                 
-            body = f"Hello!\\n\\nYou have been assigned new action items from '{meeting.title}':\\n\\n"
+            body = f"Hello!\n\nYou have been assigned new action items from '{meeting.title}':\n\n"
             for t in user_tasks:
-                body += f"- {t.description} (Due: {t.deadline or 'No deadline'})\\n"
-            body += "\\nBest,\\nMeetTrack AI"
+                body += f"- {t.description} (Due: {t.deadline or 'No deadline'})\n"
+            body += "\nBest,\nMeetTrack AI"
 
             success = send_email(email_addr, f"New Tasks from {meeting.title}", body)
             
@@ -148,13 +217,13 @@ def check_overdue_tasks():
     db = SessionLocal()
     try:
         print("--- Running Scheduled Task: Check Overdue Tasks ---")
-        today_str = date.today().isoformat()
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
-        # Simple string comparison works for YYYY-MM-DD
+        # Simple string comparison works for YYYY-MM-DD HH:MM:SS
         overdue_tasks = db.query(Task).filter(
             Task.status != TaskStatus.done,
             Task.deadline != None,
-            Task.deadline <= today_str
+            Task.deadline <= now_str
         ).all()
         
         print(f"Found {len(overdue_tasks)} overdue tasks.")
@@ -167,7 +236,7 @@ def check_overdue_tasks():
             owner_email = "kirito@yopmail.com" 
             
             subject = "OVERDUE TASK REMINDER"
-            body = f"Hello,\\n\\nThis is an automated reminder that your task is overdue:\\n\\nTask: {t.description}\\nDeadline: {t.deadline}\\n\\nPlease update the status as soon as possible."
+            body = f"Hello,\n\nThis is an automated reminder that your task is overdue:\n\nTask: {t.description}\nDeadline: {t.deadline}\n\nPlease update the status as soon as possible."
             
             success = send_email(owner_email, subject, body)
             if success:

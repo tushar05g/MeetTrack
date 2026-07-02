@@ -20,3 +20,10 @@ data/
 *.log
 lib/
 app/uploads/
+
+# Node
+node_modules/
+bot/node_modules/
+frontend/node_modules/
+*.webm
+*.wav
