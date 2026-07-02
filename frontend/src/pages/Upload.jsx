@@ -196,69 +196,126 @@ export default function Upload() {
                         )}
                     </form>
                     ) : (
-                    <form onSubmit={handleBotSubmit} style={{ textAlign: 'center' }}>
-                        <h3 style={{ marginBottom: '1rem' }}>Send Bot to Google Meet</h3>
-                        <div style={{ marginBottom: '1rem' }}>
-                            <input 
-                                type="url" 
-                                placeholder="https://meet.google.com/xxx-xxxx-xxx"
-                                value={meetUrl}
-                                onChange={(e) => setMeetUrl(e.target.value)}
-                                style={{ padding: '0.75rem', width: '80%', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}
-                                required
-                            />
-                        </div>
-                        <div style={{ marginBottom: '1.5rem', display: 'flex', gap: '1rem', justifyContent: 'center' }}>
-                            <button type="button" className="btn btn-secondary" onClick={() => window.location.href = 'http://localhost:8000/calendar/auth'}>
-                                Connect Google Calendar
-                            </button>
-                            <button type="button" className="btn btn-secondary" onClick={handleFetchCalendar}>
-                                Fetch from Calendar (Auto-fill)
-                            </button>
+                    <form onSubmit={handleBotSubmit}>
+                        {/* Header */}
+                        <div style={{ marginBottom: '1.5rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border-color)' }}>
+                            <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600 }}>Send Bot to Google Meet</h3>
+                            <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>The bot will join the meeting and record audio automatically.</p>
                         </div>
 
+                        {/* Section 1: Meeting URL */}
+                        <div style={{ marginBottom: '1.25rem' }}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.5rem', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                🔗 Meeting URL
+                            </label>
+                            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                                <input
+                                    type="url"
+                                    placeholder="https://meet.google.com/xxx-xxxx-xxx"
+                                    value={meetUrl}
+                                    onChange={(e) => setMeetUrl(e.target.value)}
+                                    style={{ flex: 1, padding: '0.65rem 0.85rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '0.9rem', outline: 'none' }}
+                                    required
+                                />
+                                <button type="button" title="Connect Google Calendar" onClick={() => window.location.href = 'http://localhost:8000/calendar/auth'}
+                                    style={{ padding: '0.65rem 0.85rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', cursor: 'pointer', whiteSpace: 'nowrap', fontSize: '0.82rem', fontWeight: 500, transition: 'all 0.2s' }}
+                                    onMouseOver={e => e.currentTarget.style.borderColor = 'var(--accent-color)'}
+                                    onMouseOut={e => e.currentTarget.style.borderColor = 'var(--border-color)'}
+                                >
+                                    📅 Connect Calendar
+                                </button>
+                                <button type="button" title="Auto-fill from Calendar" onClick={handleFetchCalendar}
+                                    style={{ padding: '0.65rem 0.85rem', borderRadius: '8px', border: '1px solid var(--accent-color)', background: 'rgba(139,92,246,0.1)', color: 'var(--accent-color)', cursor: 'pointer', whiteSpace: 'nowrap', fontSize: '0.82rem', fontWeight: 500, transition: 'all 0.2s' }}
+                                    onMouseOver={e => e.currentTarget.style.background = 'rgba(139,92,246,0.2)'}
+                                    onMouseOut={e => e.currentTarget.style.background = 'rgba(139,92,246,0.1)'}
+                                >
+                                    ✨ Auto-fill
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Section 2: Schedule + Duration side by side */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.25rem' }}>
+                            <div>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.5rem', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                    🕐 Scheduled Time <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, marginLeft: '0.25rem', color: 'var(--text-secondary)', opacity: 0.7 }}>(optional)</span>
+                                </label>
+                                <input
+                                    type="datetime-local"
+                                    value={scheduledTime}
+                                    onChange={(e) => setScheduledTime(e.target.value)}
+                                    style={{ width: '100%', padding: '0.65rem 0.85rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '0.9rem', outline: 'none', boxSizing: 'border-box' }}
+                                />
+                                {scheduledTime && (
+                                    <p style={{ margin: '0.35rem 0 0', fontSize: '0.78rem', color: 'var(--accent-color)' }}>
+                                        ⏰ Bot will auto-launch 2 min before this time
+                                    </p>
+                                )}
+                            </div>
+                            <div>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.5rem', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                    ⏱ Record Duration
+                                </label>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                    <input
+                                        type="number"
+                                        value={botDuration}
+                                        min={10}
+                                        onChange={(e) => setBotDuration(e.target.value)}
+                                        style={{ width: '100px', padding: '0.65rem 0.85rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '0.9rem', outline: 'none' }}
+                                    />
+                                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>seconds</span>
+                                </div>
+                                <p style={{ margin: '0.35rem 0 0', fontSize: '0.78rem', color: 'var(--text-secondary)', opacity: 0.7 }}>
+                                    ~{Math.floor(botDuration / 60)}m {botDuration % 60}s of recording
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Section 3: Attendees (fetched) */}
                         {fetchedAttendees.length > 0 && (
-                            <div style={{ marginBottom: '1.5rem', textAlign: 'left', background: 'rgba(255,255,255,0.03)', padding: '1rem', borderRadius: '8px' }}>
-                                <h4 style={{ marginTop: 0, marginBottom: '0.5rem' }}>Fetched Attendees ({fetchedAttendees.length})</h4>
-                                <ul style={{ margin: 0, paddingLeft: '1.2rem', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                            <div style={{ marginBottom: '1.25rem', background: 'rgba(139,92,246,0.05)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '10px', padding: '0.85rem 1rem' }}>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.6rem', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                    👥 Detected Attendees ({fetchedAttendees.length})
+                                </label>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
                                     {fetchedAttendees.map((a, i) => (
-                                        <li key={i}>{a.name} ({a.email})</li>
+                                        <span key={i} style={{ padding: '0.25rem 0.65rem', background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)', borderRadius: '20px', fontSize: '0.82rem', color: 'var(--text-primary)' }}>
+                                            {a.name}
+                                        </span>
                                     ))}
-                                </ul>
+                                </div>
                             </div>
                         )}
-                        
-                        <div style={{ marginTop: '1.5rem', textAlign: 'center' }}>
-                            <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>Scheduled Time (Optional):</label>
-                            <input 
-                                type="datetime-local" 
-                                value={scheduledTime}
-                                onChange={(e) => setScheduledTime(e.target.value)}
-                                style={{ padding: '0.5rem', width: '220px', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}
-                            />
+
+                        {/* Section 4: CSV Upload — custom drag-and-drop */}
+                        <div style={{ marginBottom: '1.5rem' }}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.5rem', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                📎 Participants CSV <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, marginLeft: '0.25rem', opacity: 0.7 }}>(optional)</span>
+                            </label>
+                            <div
+                                onClick={() => document.getElementById('csv-upload-input').click()}
+                                onDrop={(e) => { e.preventDefault(); if (e.dataTransfer.files[0]) setCsvFile(e.dataTransfer.files[0]); }}
+                                onDragOver={(e) => e.preventDefault()}
+                                style={{ border: `1px dashed ${csvFile ? 'var(--accent-color)' : 'var(--border-color)'}`, borderRadius: '10px', padding: '0.85rem 1rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: csvFile ? 'rgba(139,92,246,0.05)' : 'transparent', transition: 'all 0.2s' }}
+                                onMouseOver={e => e.currentTarget.style.borderColor = 'var(--accent-color)'}
+                                onMouseOut={e => e.currentTarget.style.borderColor = csvFile ? 'var(--accent-color)' : 'var(--border-color)'}
+                            >
+                                <span style={{ fontSize: '0.88rem', color: csvFile ? 'var(--accent-color)' : 'var(--text-secondary)' }}>
+                                    {csvFile ? `✅ ${csvFile.name}` : 'Drop your CSV here or click to browse — columns: Name, Email'}
+                                </span>
+                                {csvFile && (
+                                    <button type="button" onClick={(e) => { e.stopPropagation(); setCsvFile(null); }}
+                                        style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '1.1rem', lineHeight: 1 }}>✕</button>
+                                )}
+                            </div>
+                            <input id="csv-upload-input" type="file" accept=".csv" onChange={(e) => setCsvFile(e.target.files[0])} style={{ display: 'none' }} />
                         </div>
 
-                        <div style={{ marginTop: '1.5rem', textAlign: 'center' }}>
-                            <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>Record Duration (seconds):</label>
-                            <input 
-                                type="number" 
-                                value={botDuration}
-                                onChange={(e) => setBotDuration(e.target.value)}
-                                style={{ padding: '0.5rem', width: '100px', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}
-                            />
-                        </div>
-                        <div style={{ marginBottom: '1.5rem', border: '1px dashed var(--border-color)', padding: '1rem', borderRadius: '8px' }}>
-                            <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>Optional: Upload Participants CSV (columns: Name, Email)</label>
-                            <input 
-                                type="file" 
-                                accept=".csv"
-                                onChange={(e) => setCsvFile(e.target.files[0])}
-                                style={{ color: 'var(--text-primary)' }}
-                            />
-                        </div>
-                        <button type="submit" className="btn btn-primary" disabled={botStatus === 'dispatching'}>
-                            {botStatus === 'dispatching' ? <RefreshCw className="spin" /> : <Wand2 />} 
-                            {botStatus === 'dispatching' ? ' Processing...' : (scheduledTime ? ' Schedule Bot' : ' Dispatch Live Bot')}
+                        {/* Submit */}
+                        <button type="submit" className="btn btn-primary" style={{ width: '100%', padding: '0.8rem', fontSize: '0.95rem', justifyContent: 'center' }} disabled={botStatus === 'dispatching'}>
+                            {botStatus === 'dispatching' ? <RefreshCw className="spin" /> : <Wand2 />}
+                            {botStatus === 'dispatching' ? '  Processing...' : (scheduledTime ? '  Schedule Bot' : '  Dispatch Live Bot')}
                         </button>
                     </form>
                     )
