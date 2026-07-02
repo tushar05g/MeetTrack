@@ -22,7 +22,7 @@ async function screenshot(page, name) {
         const p = join(screenshotDir, `${name}.png`);
         await page.screenshot({ path: p, fullPage: false });
         console.log(`[BOT] Screenshot saved: ${p}`);
-    } catch(e) {
+    } catch (e) {
         console.log(`[BOT] Screenshot failed (${name}):`, e.message);
     }
 }
@@ -48,7 +48,7 @@ async function startBot() {
         ).toString().trim();
         virtualSinkModule = moduleId;
         console.log(`[BOT] Virtual PulseAudio sink created (module ${moduleId}).`);
-    } catch(e) {
+    } catch (e) {
         console.log(`[BOT] Could not create virtual sink (PulseAudio unavailable?): ${e.message}`);
         console.log(`[BOT] Falling back to default audio sink for recording.`);
     }
@@ -143,7 +143,7 @@ async function startBot() {
             console.log(`[BOT] Typed name using selector: ${sel}`);
             typedName = true;
             break;
-        } catch(e) {}
+        } catch (e) { }
     }
 
     if (!typedName) {
@@ -164,7 +164,7 @@ async function startBot() {
             console.log('[BOT] Dismissed "Sign in" popup.');
             await new Promise(r => setTimeout(r, 800));
         }
-    } catch(e) {}
+    } catch (e) { }
 
     await new Promise(r => setTimeout(r, 1000));
 
@@ -175,7 +175,7 @@ async function startBot() {
             const text = (b.innerText || '').toLowerCase();
             const label = (b.getAttribute('aria-label') || '').toLowerCase();
             return text.includes('ask to join') || text.includes('join now') ||
-                   text.includes('join') || label.includes('join');
+                text.includes('join') || label.includes('join');
         });
         if (joinBtn) { joinBtn.click(); return joinBtn.innerText || 'clicked'; }
         return null;
@@ -206,12 +206,12 @@ async function startBot() {
         }, { timeout: 120000 });
         console.log("[BOT] Joined the meeting successfully!");
         await screenshot(page, "04_inside_meeting");
-    } catch(e) {
+    } catch (e) {
         console.error("[BOT] Timed out waiting to be admitted.");
         await screenshot(page, "04_admission_timeout");
         await browser.close();
         if (virtualSinkModule) {
-            try { execSync(`pactl unload-module ${virtualSinkModule}`); } catch(_) {}
+            try { execSync(`pactl unload-module ${virtualSinkModule}`); } catch (_) { }
         }
         process.exit(1);
     }
@@ -256,7 +256,7 @@ async function startBot() {
         else console.log("[BOT] Could not find participants button.");
         await new Promise(r => setTimeout(r, 1500));
         await screenshot(page, "05_participants_panel");
-    } catch(e) {
+    } catch (e) {
         console.log("[BOT] Error opening participants:", e.message);
     }
 
@@ -276,7 +276,7 @@ async function startBot() {
             if (names.length > 0) {
                 console.log(`[BOT] Current participants: ${Array.from(participants).join(", ")}`);
             }
-        } catch(e) {}
+        } catch (e) { }
     }, 5000);
 
     // Record for the specified duration
@@ -293,7 +293,7 @@ async function startBot() {
 
     try {
         await browser.close();
-    } catch(e) {
+    } catch (e) {
         console.log("[BOT] Browser close warning (safe to ignore):", e.message);
     }
 
@@ -303,7 +303,7 @@ async function startBot() {
             const { execSync } = await import("child_process");
             execSync(`pactl unload-module ${virtualSinkModule}`);
             console.log("[BOT] Removed virtual PulseAudio sink.");
-        } catch(e) {}
+        } catch (e) { }
     }
 
     console.log("[BOT] Done. Audio saved to:", outputAudio);
