@@ -21,7 +21,7 @@ def format_transcript(segments):
         transcript_text += f"[{start:.1f}s - {end:.1f}s] {speaker}: {text}\n"
     return transcript_text
 
-def extract_tasks_from_transcript(segments, meeting_date, users_list):
+def extract_tasks_from_transcript(segments, meeting_date, users_list, calendar_map_str=""):
     """
     Pass the formatted transcript to Groq and ask it to extract action items.
     """
@@ -34,6 +34,9 @@ def extract_tasks_from_transcript(segments, meeting_date, users_list):
     - Meeting date: {meeting_date}
     - Available participants (name → email lookup table): {users_list}
     
+    Calendar Reference (use this exact mapping for relative days like "Friday" or "Next Monday"):
+    {calendar_map_str}
+    
     Here is the diarized meeting transcript:
     ---
     {transcript_text}
@@ -44,7 +47,7 @@ def extract_tasks_from_transcript(segments, meeting_date, users_list):
     CRITICAL INSTRUCTIONS:
     1. DEDUPLICATE: Merge discussions of the same task into ONE task. Do NOT create multiple tasks for the same discussion.
     
-    2. ACCURATE DEADLINES: Calculate exact dates from relative phrases ("by Friday", "tomorrow") based on meeting date ({meeting_date}).
+    2. ACCURATE DEADLINES: Calculate exact dates from relative phrases ("by Friday", "tomorrow") by STRICTLY looking up the phrase in the "Calendar Reference" above. Do NOT do math yourself.
        Use format: YYYY-MM-DD HH:MM:SS. Default time: 23:59:59. Morning→09:00, Afternoon→14:00, Evening→18:00.
     
     3. OWNER IDENTIFICATION (most important):

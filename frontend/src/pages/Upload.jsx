@@ -12,6 +12,7 @@ export default function Upload() {
 
     const [activeTab, setActiveTab] = useState('upload'); // 'upload' or 'bot'
     const [meetUrl, setMeetUrl] = useState('');
+    const [scheduledTime, setScheduledTime] = useState('');
     const [botDuration, setBotDuration] = useState(60);
     const [botStatus, setBotStatus] = useState('idle');
     const [csvFile, setCsvFile] = useState(null);
@@ -62,6 +63,9 @@ export default function Upload() {
         const formData = new FormData();
         formData.append('meet_url', meetUrl);
         formData.append('duration_seconds', botDuration);
+        if (scheduledTime) {
+            formData.append('scheduled_time', new Date(scheduledTime).toISOString());
+        }
         if (csvFile) {
             formData.append('participants_csv', csvFile);
         }
@@ -77,7 +81,7 @@ export default function Upload() {
         } catch (err) {
             console.error(err);
             setBotStatus('idle');
-            alert('Bot dispatch failed: ' + err.message);
+            alert(err.response?.data?.detail || 'Bot dispatch failed: ' + err.message);
         }
     };
 
@@ -95,6 +99,13 @@ export default function Upload() {
             if (res.data.meet_url) {
                 setMeetUrl(res.data.meet_url);
                 setFetchedAttendees(res.data.attendees || []);
+                if (res.data.start_time) {
+                    const localDate = new Date(res.data.start_time);
+                    const tzoffset = (new Date()).getTimezoneOffset() * 60000;
+                    const localISOTime = new Date(localDate - tzoffset).toISOString().slice(0, 16);
+                    setScheduledTime(localISOTime);
+                }
+                alert('Successfully fetched upcoming meeting from Calendar!');
             }
         } catch (err) {
             alert('Failed to fetch from calendar');
@@ -218,6 +229,16 @@ export default function Upload() {
                         )}
                         
                         <div style={{ marginTop: '1.5rem', textAlign: 'center' }}>
+                            <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>Scheduled Time (Optional):</label>
+                            <input 
+                                type="datetime-local" 
+                                value={scheduledTime}
+                                onChange={(e) => setScheduledTime(e.target.value)}
+                                style={{ padding: '0.5rem', width: '220px', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}
+                            />
+                        </div>
+
+                        <div style={{ marginTop: '1.5rem', textAlign: 'center' }}>
                             <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>Record Duration (seconds):</label>
                             <input 
                                 type="number" 
@@ -237,7 +258,7 @@ export default function Upload() {
                         </div>
                         <button type="submit" className="btn btn-primary" disabled={botStatus === 'dispatching'}>
                             {botStatus === 'dispatching' ? <RefreshCw className="spin" /> : <Wand2 />} 
-                            {botStatus === 'dispatching' ? ' Dispatching...' : ' Dispatch Bot'}
+                            {botStatus === 'dispatching' ? ' Processing...' : (scheduledTime ? ' Schedule Bot' : ' Dispatch Live Bot')}
                         </button>
                     </form>
                     )

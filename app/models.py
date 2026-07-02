@@ -12,6 +12,7 @@ class MeetingStatus(str, enum.Enum):
     extracting = "extracting"
     done = "done"
     failed = "failed"
+    scheduled = "scheduled"
 
 class TaskStatus(str, enum.Enum):
     pending = "pending"
@@ -42,6 +43,9 @@ class Meeting(Base):
     status = Column(Enum(MeetingStatus), default=MeetingStatus.pending)
     created_at = Column(DateTime, default=datetime.utcnow)
     recorded_date = Column(Date, default=date.today)
+    scheduled_time = Column(DateTime, nullable=True)
+    meet_url = Column(String, nullable=True)
+    bot_duration = Column(Integer, default=60)
 
     transcript = relationship("Transcript", back_populates="meeting", uselist=False)
     tasks = relationship("Task", back_populates="meeting")

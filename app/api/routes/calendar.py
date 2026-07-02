@@ -104,6 +104,11 @@ def fetch_upcoming_meeting(db: Session = Depends(get_db)):
         meet_url = target_event['hangoutLink']
         attendees = target_event.get('attendees', [])
         
+        # Get start time if available
+        start_time = None
+        if 'start' in target_event and 'dateTime' in target_event['start']:
+            start_time = target_event['start']['dateTime']
+        
         # Save to DB
         meeting = Meeting(
             title=f"Calendar Sync: {target_event.get('summary', 'Untitled')}",
@@ -128,7 +133,8 @@ def fetch_upcoming_meeting(db: Session = Depends(get_db)):
             "status": "ok",
             "meet_url": meet_url,
             "meeting_id": meeting.id,
-            "attendees": saved_attendees
+            "attendees": saved_attendees,
+            "start_time": start_time
         }
         
     except Exception as e:

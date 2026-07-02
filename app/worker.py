@@ -3,7 +3,7 @@ import sys
 import json
 import subprocess
 import traceback
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from celery import Celery
 from celery.schedules import crontab
 
@@ -28,6 +28,10 @@ celery_app.conf.beat_schedule = {
         'task': 'check_overdue_tasks',
         'schedule': crontab(hour=9, minute=0),
     },
+    'check-scheduled-meetings': {
+        'task': 'check_scheduled_meetings',
+        'schedule': 60.0,
+    }
 }
 
 # Mock user mapping for testing
@@ -160,9 +164,19 @@ def process_meeting(self, meeting_id: int, bot_participants: str = None):
 
         # Step 3: Extract Tasks
         print("[STEP 3] Extracting tasks...")
-        meeting_date_str = meeting.recorded_date.isoformat() if meeting.recorded_date else date.today().isoformat()
+        meeting_date_obj = meeting.recorded_date if meeting.recorded_date else date.today()
+        meeting_date_str = meeting_date_obj.strftime("%Y-%m-%d (%A)")
+        
+        # Pre-calculate exact calendar dates so the LLM doesn't hallucinate math
+        calendar_map = []
+        for i in range(14):
+            d = meeting_date_obj + timedelta(days=i)
+            prefix = "Today" if i == 0 else "Tomorrow" if i == 1 else "Next " + d.strftime("%A") if i >= 7 else d.strftime("%A")
+            calendar_map.append(f"- {prefix}: {d.strftime('%Y-%m-%d')}")
+        calendar_map_str = "\n".join(calendar_map)
+        
         try:
-            parsed_tasks = extract_tasks_from_transcript(diarized_segments, meeting_date_str, users_list)
+            parsed_tasks = extract_tasks_from_transcript(diarized_segments, meeting_date_str, users_list, calendar_map_str)
         except Exception as extract_err:
             print(f"[STEP 3] Task extraction failed ({extract_err}), continuing with no tasks.")
             traceback.print_exc()
@@ -294,5 +308,33 @@ def check_overdue_tasks():
                 
     except Exception as e:
         print(f"Error checking overdue tasks: {e}")
+    finally:
+        db.close()
+
+@celery_app.task(name="check_scheduled_meetings")
+def check_scheduled_meetings():
+    db = SessionLocal()
+    try:
+        now = datetime.utcnow()
+        # Look for meetings scheduled within the next 2 minutes
+        threshold = now + timedelta(minutes=2)
+        
+        upcoming_meetings = db.query(Meeting).filter(
+            Meeting.status == MeetingStatus.scheduled,
+            Meeting.scheduled_time <= threshold
+        ).all()
+        
+        for meeting in upcoming_meetings:
+            print(f"[SCHEDULER] Dispatching bot for meeting {meeting.id} scheduled at {meeting.scheduled_time}")
+            meeting.status = MeetingStatus.pending
+            db.commit()
+            
+            if meeting.meet_url:
+                run_bot_and_process.delay(meeting.id, meeting.meet_url, meeting.bot_duration or 60)
+            else:
+                print(f"[SCHEDULER] Error: Meeting {meeting.id} has no meet_url.")
+                
+    except Exception as e:
+        print(f"Error in scheduler: {e}")
     finally:
         db.close()

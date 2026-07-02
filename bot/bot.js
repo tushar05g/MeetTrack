@@ -133,22 +133,9 @@ async function startBot() {
         'input[placeholder*="name" i]',
     ];
 
+    // NOTE: Disabled per user request to avoid bot detection.
+    console.log("[BOT] Skipping automated name entry. Please manually type the name and click 'Ask to join'.");
     let typedName = false;
-    for (const sel of nameSelectors) {
-        try {
-            await page.waitForSelector(sel, { timeout: 3000 });
-            await page.click(sel);
-            await page.evaluate(sel => { document.querySelector(sel).value = ''; }, sel);
-            await page.type(sel, "MeetTrack AI", { delay: 50 });
-            console.log(`[BOT] Typed name using selector: ${sel}`);
-            typedName = true;
-            break;
-        } catch (e) { }
-    }
-
-    if (!typedName) {
-        console.log("[BOT] Could not find name input. Will attempt to join directly.");
-    }
 
     await screenshot(page, "02_before_join_click");
 
@@ -169,24 +156,9 @@ async function startBot() {
     await new Promise(r => setTimeout(r, 1000));
 
     // Click Join / Ask to join
-    const joinClicked = await page.evaluate(() => {
-        const buttons = Array.from(document.querySelectorAll('button'));
-        const joinBtn = buttons.find(b => {
-            const text = (b.innerText || '').toLowerCase();
-            const label = (b.getAttribute('aria-label') || '').toLowerCase();
-            return text.includes('ask to join') || text.includes('join now') ||
-                text.includes('join') || label.includes('join');
-        });
-        if (joinBtn) { joinBtn.click(); return joinBtn.innerText || 'clicked'; }
-        return null;
-    });
-
-    if (joinClicked) {
-        console.log(`[BOT] Clicked join button: "${joinClicked.trim()}". Waiting for page to stabilize...`);
-        await new Promise(r => setTimeout(r, 4000));
-    } else {
-        console.log("[BOT] No join button found.");
-    }
+    // NOTE: Disabled per user request to avoid bot detection. 
+    // The user will manually click "Ask to join" on the visible Chrome window.
+    console.log("[BOT] Skipping auto-click. Waiting for human to manually click 'Ask to join'...");
 
     await screenshot(page, "03_after_join_click");
 
@@ -195,17 +167,29 @@ async function startBot() {
     try {
         await page.waitForFunction(() => {
             const selectors = [
-                'button[aria-label*="microphone" i]',
-                'button[aria-label*="camera" i]',
-                'button[aria-label*="Turn off microphone" i]',
-                'button[aria-label*="Turn on microphone" i]',
-                'button[data-is-muted]',
-                '[jsname="BOHaEe"]',
+                'button[aria-label*="leave call" i]',
+                'button[aria-label*="meeting details" i]',
+                'button[aria-label*="chat with everyone" i]',
+                'button[aria-label*="show everyone" i]'
             ];
             return selectors.some(sel => document.querySelectorAll(sel).length > 0);
         }, { timeout: 120000 });
         console.log("[BOT] Joined the meeting successfully!");
         await screenshot(page, "04_inside_meeting");
+        
+        // Hide (minimize) the Chrome window so it's out of the user's way
+        try {
+            console.log("[BOT] Minimizing Chrome window...");
+            const session = await page.target().createCDPSession();
+            const { windowId } = await session.send('Browser.getWindowForTarget');
+            await session.send('Browser.setWindowBounds', {
+                windowId,
+                bounds: { windowState: 'minimized' }
+            });
+            console.log("[BOT] Window minimized.");
+        } catch (e) {
+            console.log("[BOT] Could not minimize window:", e.message);
+        }
     } catch (e) {
         console.error("[BOT] Timed out waiting to be admitted.");
         await screenshot(page, "04_admission_timeout");
