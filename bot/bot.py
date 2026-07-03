@@ -194,6 +194,15 @@ async def start_bot(meet_url, output_audio, output_json, duration_seconds):
             start_time = time.time()
             while time.time() - start_time < duration_seconds:
                 try:
+                    # Detect if removed or meeting ended
+                    body_text = await page.evaluate("document.body.innerText")
+                    if "You've been removed" in body_text or "You left the meeting" in body_text or "Return to home screen" in body_text:
+                        print("[BOT] Bot was removed or meeting ended. Stopping early.")
+                        break
+                except Exception as e:
+                    print(f"[BOT] Error checking removal status: {e}")
+                
+                try:
                     elements = await page.locator('[role="listitem"] span[dir="auto"], [role="listitem"] div[dir="auto"]').all_inner_texts()
                     names = [n.strip() for n in elements if n.strip() and n.strip() != "You" and "Presentation" not in n]
                     for name in names:
