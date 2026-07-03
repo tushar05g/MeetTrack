@@ -39,6 +39,9 @@ export default function Upload() {
         const formData = new FormData();
         formData.append('file', file);
         formData.append('recorded_date', recordedDate);
+        if (csvFile) {
+            formData.append('participants_csv', csvFile);
+        }
 
         try {
             const res = await api.post('/meetings/upload', formData, {
@@ -181,6 +184,30 @@ export default function Upload() {
                                 onChange={(e) => setRecordedDate(e.target.value)}
                                 style={{ padding: '0.5rem 1rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', outline: 'none', minWidth: '200px' }}
                             />
+                        </div>
+
+                        {/* CSV Upload for Manual File */}
+                        <div style={{ marginTop: '1.5rem' }}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.5rem', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                📎 Participants CSV <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, marginLeft: '0.25rem', opacity: 0.7 }}>(optional)</span>
+                            </label>
+                            <div
+                                onClick={() => document.getElementById('csv-upload-input-manual').click()}
+                                onDrop={(e) => { e.preventDefault(); if (e.dataTransfer.files[0]) setCsvFile(e.dataTransfer.files[0]); }}
+                                onDragOver={(e) => e.preventDefault()}
+                                style={{ border: `1px dashed ${csvFile ? 'var(--accent-color)' : 'var(--border-color)'}`, borderRadius: '10px', padding: '0.85rem 1rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: csvFile ? 'rgba(139,92,246,0.05)' : 'transparent', transition: 'all 0.2s' }}
+                                onMouseOver={e => e.currentTarget.style.borderColor = 'var(--accent-color)'}
+                                onMouseOut={e => e.currentTarget.style.borderColor = csvFile ? 'var(--accent-color)' : 'var(--border-color)'}
+                            >
+                                <span style={{ fontSize: '0.88rem', color: csvFile ? 'var(--accent-color)' : 'var(--text-secondary)' }}>
+                                    {csvFile ? `✅ ${csvFile.name}` : 'Drop your CSV here or click to browse — columns: Name, Email'}
+                                </span>
+                                {csvFile && (
+                                    <button type="button" onClick={(e) => { e.stopPropagation(); setCsvFile(null); }}
+                                        style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '1.1rem', lineHeight: 1 }}>✕</button>
+                                )}
+                            </div>
+                            <input id="csv-upload-input-manual" type="file" accept=".csv" onChange={(e) => setCsvFile(e.target.files[0])} style={{ display: 'none' }} />
                         </div>
 
                         {file && (

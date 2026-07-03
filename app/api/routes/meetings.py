@@ -24,6 +24,28 @@ def get_db():
 
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads")
 
+def parse_participants_csv(db: Session, meeting_id: int, participants_csv: UploadFile):
+    if not participants_csv:
+        return
+    try:
+        content = participants_csv.file.read().decode("utf-8")
+        reader = csv.DictReader(io.StringIO(content))
+        
+        name_col = next((f for f in reader.fieldnames if f.lower().strip() in ["name", "full name", "participant"]), None)
+        email_col = next((f for f in reader.fieldnames if f.lower().strip() in ["email", "e-mail", "email address"]), None)
+
+        from app.models import MeetingParticipant
+        if name_col and email_col:
+            for row in reader:
+                name = row.get(name_col, "").strip()
+                email = row.get(email_col, "").strip()
+                if name and email:
+                    mp = MeetingParticipant(meeting_id=meeting_id, name=name, email=email)
+                    db.add(mp)
+            db.commit()
+    except Exception as e:
+        print(f"Failed to parse CSV: {e}")
+
 @router.post("/bot/join")
 def join_live_meeting(
     meet_url: str = Form(...),
@@ -52,24 +74,7 @@ def join_live_meeting(
     db.refresh(meeting)
 
     # Process CSV if provided
-    if participants_csv:
-        content = participants_csv.file.read().decode("utf-8")
-        reader = csv.DictReader(io.StringIO(content))
-        
-        # Try to find name and email columns gracefully
-        fieldnames = [f.lower().strip() for f in (reader.fieldnames or [])]
-        name_col = next((f for f in reader.fieldnames if f.lower().strip() in ["name", "full name", "participant"]), None)
-        email_col = next((f for f in reader.fieldnames if f.lower().strip() in ["email", "e-mail", "email address"]), None)
-
-        from app.models import MeetingParticipant
-        if name_col and email_col:
-            for row in reader:
-                name = row.get(name_col, "").strip()
-                email = row.get(email_col, "").strip()
-                if name and email:
-                    mp = MeetingParticipant(meeting_id=meeting.id, name=name, email=email)
-                    db.add(mp)
-            db.commit()
+    parse_participants_csv(db, meeting.id, participants_csv)
     
     if parsed_time:
         return {"message": "Meeting scheduled successfully", "meeting_id": meeting.id, "scheduled": True}
@@ -82,6 +87,7 @@ def join_live_meeting(
 async def upload_meeting(
     file: UploadFile = File(...), 
     recorded_date: date = Form(default_factory=date.today),
+    participants_csv: UploadFile = File(None),
     db: Session = Depends(get_db)
 ):
     if not file.filename:
@@ -106,6 +112,9 @@ async def upload_meeting(
     db.add(meeting)
     db.commit()
     db.refresh(meeting)
+    
+    # Parse CSV if uploaded
+    parse_participants_csv(db, meeting.id, participants_csv)
     
     # Trigger Celery background task
     process_meeting.delay(meeting.id)
