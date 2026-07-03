@@ -125,10 +125,10 @@ export default function Upload() {
         }
     };
 
-    const steps = ['pending', 'transcribing', 'extracting', 'done'];
+    const steps = ['pending', 'processing', 'extracting', 'done'];
     const currentStepIndex = steps.indexOf(status);
 
-    const isProcessing = ['pending', 'transcribing', 'extracting', 'uploading'].includes(status);
+    const isProcessing = ['pending', 'processing', 'extracting', 'uploading'].includes(status);
 
     return (
         <div className="animate-fade-in delay-1" style={{ maxWidth: '800px', margin: '0 auto' }}>

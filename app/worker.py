@@ -52,10 +52,10 @@ def run_bot_and_process(meeting_id: int, meet_url: str, duration_seconds: int = 
         output_audio = os.path.join(os.path.dirname(os.path.dirname(__file__)), "app", "uploads", f"bot_meeting_{meeting.id}.webm")
         output_json = os.path.join(os.path.dirname(os.path.dirname(__file__)), "app", "uploads", f"bot_meeting_{meeting.id}.json")
         
-        print(f"[BOT DISPATCH] Spawning Node.js bot for {meet_url}...")
+        print(f"[BOT DISPATCH] Spawning Python Playwright bot for {meet_url}...")
         
         result = subprocess.run([
-            "node", "bot.js", meet_url, output_audio, output_json, str(duration_seconds)
+            sys.executable, "bot.py", meet_url, output_audio, output_json, str(duration_seconds)
         ], cwd=bot_dir, capture_output=True, text=True)
         
         print("[BOT LOGS]\n", result.stdout)
