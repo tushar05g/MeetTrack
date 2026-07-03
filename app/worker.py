@@ -49,37 +49,22 @@ def run_bot_and_process(meeting_id: int, meet_url: str, duration_seconds: int = 
             return
 
         bot_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "bot")
-        output_audio = os.path.join(os.path.dirname(os.path.dirname(__file__)), "app", "uploads", f"bot_meeting_{meeting.id}.webm")
         output_json = os.path.join(os.path.dirname(os.path.dirname(__file__)), "app", "uploads", f"bot_meeting_{meeting.id}.json")
         
         print(f"[BOT DISPATCH] Spawning Python Playwright bot for {meet_url}...")
         
         result = subprocess.run([
-            sys.executable, "bot.py", meet_url, output_audio, output_json, str(duration_seconds)
+            sys.executable, "bot.py", meet_url, output_json, str(duration_seconds)
         ], cwd=bot_dir, capture_output=True, text=True)
         
         print("[BOT LOGS]\n", result.stdout)
         if result.stderr:
             print("[BOT ERROR LOGS]\n", result.stderr)
 
-        if not os.path.exists(output_audio):
-            print("Bot failed to produce audio file!")
-            meeting.status = MeetingStatus.failed
-            db.commit()
-            return
-            
-        meeting.audio_file_path = output_audio
+        meeting.audio_file_path = ""
         db.commit()
-        
-        participants_list = None
-        if os.path.exists(output_json):
-            with open(output_json, "r") as f:
-                parts = json.load(f)
-                if parts:
-                    participants_list = ", ".join(parts)
-        
         db.close()
-        process_meeting.delay(meeting_id, bot_participants=participants_list)
+        process_meeting.delay(meeting_id)
 
     except Exception as e:
         print(f"Error running bot: {e}")
@@ -90,7 +75,7 @@ def run_bot_and_process(meeting_id: int, meet_url: str, duration_seconds: int = 
         db.close()
 
 @celery_app.task(name="process_meeting", bind=True)
-def process_meeting(self, meeting_id: int, bot_participants: str = None):
+def process_meeting(self, meeting_id: int):
     db = SessionLocal()
     try:
         meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
@@ -101,32 +86,51 @@ def process_meeting(self, meeting_id: int, bot_participants: str = None):
         print(f"--- Starting Processing for Meeting {meeting.id}: {meeting.title} ---")
         meeting.status = MeetingStatus.processing
         db.commit()
+        
+        output_json = os.path.join(os.path.dirname(os.path.dirname(__file__)), "app", "uploads", f"bot_meeting_{meeting.id}.json")
+        bot_transcript_data = None
+        bot_participants = None
+        
+        if os.path.exists(output_json):
+            try:
+                with open(output_json, "r") as f:
+                    data = json.load(f)
+                    if data and isinstance(data, list):
+                        if isinstance(data[0], str):
+                            bot_participants = ", ".join(data)
+                        elif isinstance(data[0], dict):
+                            bot_transcript_data = data
+                            bot_participants = ", ".join(list(set(d.get('speaker', 'Unknown') for d in data)))
+            except Exception as e:
+                print(f"Error loading bot JSON: {e}")
 
-        # Step 1: Transcribe
-        print("[STEP 1] Transcribing audio...")
-        raw_segments = transcribe_audio(meeting.audio_file_path)
+        if bot_transcript_data:
+            print("[STEP 1 & 2] Live CC transcript found! Skipping Whisper and Pyannote...")
+            diarized_segments = bot_transcript_data
+        else:
+            # Step 1: Transcribe
+            print("[STEP 1] Transcribing audio...")
+            raw_segments = transcribe_audio(meeting.audio_file_path)
 
-        if not raw_segments:
-            print("[STEP 1] No speech detected in audio (silent meeting). Marking as done.")
-            # Save empty transcript so the meeting record is complete
-            transcript = Transcript(meeting_id=meeting.id, full_text="[No speech detected]", segments=[])
-            db.add(transcript)
-            meeting.status = MeetingStatus.done
-            db.commit()
-            return
+            if not raw_segments:
+                print("[STEP 1] No speech detected in audio (silent meeting). Marking as done.")
+                transcript = Transcript(meeting_id=meeting.id, full_text="[No speech detected]", segments=[])
+                db.add(transcript)
+                meeting.status = MeetingStatus.done
+                db.commit()
+                return
 
-        # Step 2: Diarize
-        print("[STEP 2] Diarizing audio...")
-        try:
-            diarized_segments = diarize_audio(meeting.audio_file_path, raw_segments)
-        except Exception as diarize_err:
-            print(f"[STEP 2] Diarization failed ({diarize_err}), falling back to raw transcription without speaker labels.")
-            traceback.print_exc()
-            # Fall back: add a default speaker label to raw segments
-            diarized_segments = [
-                {**seg, "speaker": seg.get("speaker", "SPEAKER_00")}
-                for seg in raw_segments
-            ]
+            # Step 2: Diarize
+            print("[STEP 2] Diarizing audio...")
+            try:
+                diarized_segments = diarize_audio(meeting.audio_file_path, raw_segments)
+            except Exception as diarize_err:
+                print(f"[STEP 2] Diarization failed ({diarize_err}), falling back to raw transcription without speaker labels.")
+                traceback.print_exc()
+                diarized_segments = [
+                    {**seg, "speaker": seg.get("speaker", "SPEAKER_00")}
+                    for seg in raw_segments
+                ]
 
         # Normalize segments — guard against missing keys
         full_text = "\n".join([

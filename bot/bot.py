@@ -17,29 +17,10 @@ async def screenshot(page, name):
     except Exception as e:
         print(f"[BOT] Screenshot failed ({name}): {e}")
 
-async def start_bot(meet_url, output_audio, output_json, duration_seconds):
+async def start_bot(meet_url, output_json, duration_seconds):
     print(f"[BOT] Starting bot for {meet_url}")
 
-    SINK_NAME = "meettrack_bot_sink"
-    virtual_sink_module = None
-
-    try:
-        # Load a null sink into PulseAudio
-        result = subprocess.run(
-            f"pactl load-module module-null-sink sink_name={SINK_NAME} sink_properties=device.description=MeetTrackBot",
-            shell=True, capture_output=True, text=True, check=True
-        )
-        virtual_sink_module = result.stdout.strip()
-        print(f"[BOT] Virtual PulseAudio sink created (module {virtual_sink_module}).")
-    except Exception as e:
-        print(f"[BOT] Could not create virtual sink (PulseAudio unavailable?): {e}")
-        print("[BOT] Falling back to default audio sink for recording.")
-
-    record_source = f"{SINK_NAME}.monitor" if virtual_sink_module else "default.monitor"
-
     env = os.environ.copy()
-    if virtual_sink_module:
-        env["PULSE_SINK"] = SINK_NAME
 
     async with async_playwright() as p:
         # We must run headless=False to avoid bot detection
@@ -138,6 +119,20 @@ async def start_bot(meet_url, output_audio, output_json, duration_seconds):
             await page.keyboard.press("Control+d")
             await page.wait_for_timeout(500)
             await page.keyboard.press("Control+e")
+            await page.wait_for_timeout(500)
+            
+            try:
+                print("[BOT] Turning on Closed Captions...")
+                cc_btn = page.locator('button[aria-label*="Turn on captions" i], button[aria-label*="caption" i]').first
+                if await cc_btn.is_visible():
+                    await cc_btn.click()
+                    print("[BOT] Closed Captions enabled.")
+                else:
+                    print("[BOT] Could not find Closed Captions button. Pressing 'c' key as fallback.")
+                    await page.keyboard.press("c")
+            except Exception as e:
+                print(f"[BOT] Error turning on captions: {e}")
+            
             
             try:
                 print("[BOT] Minimizing Chrome window...")
@@ -155,24 +150,7 @@ async def start_bot(meet_url, output_audio, output_json, duration_seconds):
             print("[BOT] Timed out waiting to be admitted.")
             await screenshot(page, "04_admission_timeout")
             await browser.close()
-            if virtual_sink_module:
-                try:
-                    subprocess.run(f"pactl unload-module {virtual_sink_module}", shell=True)
-                except:
-                    pass
             sys.exit(1)
-
-        print(f"[BOT] Starting ffmpeg audio recording from source: {record_source}")
-        ffmpeg_proc = subprocess.Popen(
-            [
-                "ffmpeg", "-y", "-f", "pulse", "-i", record_source,
-                "-c:a", "libopus", "-b:a", "96k", output_audio
-            ],
-            stderr=subprocess.PIPE,
-            text=True
-        )
-
-        print(f"[BOT] Recording audio to: {output_audio}")
 
         # Try to open the participants panel
         try:
@@ -188,10 +166,12 @@ async def start_bot(meet_url, output_audio, output_json, duration_seconds):
         except Exception as e:
             print(f"[BOT] Error opening participants: {e}")
 
-        participants = set()
+        transcript_data = []
         
         async def scrape_loop():
             start_time = time.time()
+            last_text = ""
+            
             while time.time() - start_time < duration_seconds:
                 try:
                     # Detect if removed or meeting ended
@@ -200,65 +180,85 @@ async def start_bot(meet_url, output_audio, output_json, duration_seconds):
                         print("[BOT] Bot was removed or meeting ended. Stopping early.")
                         break
                 except Exception as e:
-                    print(f"[BOT] Error checking removal status: {e}")
+                    pass
                 
                 try:
-                    elements = await page.locator('[role="listitem"] span[dir="auto"], [role="listitem"] div[dir="auto"]').all_inner_texts()
-                    names = [n.strip() for n in elements if n.strip() and n.strip() != "You" and "Presentation" not in n]
-                    for name in names:
-                        participants.add(name)
+                    # Scrape Captions
+                    blocks = await page.evaluate("""
+                        () => {
+                            const results = [];
+                            const nameElements = document.querySelectorAll('.zs7s8d, .YTbUzc');
+                            nameElements.forEach(nameEl => {
+                                const name = nameEl.innerText.trim();
+                                const container = nameEl.closest('.a4cQT, div[style*="bottom"]') || nameEl.parentElement.parentElement;
+                                if (container) {
+                                    const textSpans = container.querySelectorAll('.CNusmb');
+                                    let text = Array.from(textSpans).map(span => span.innerText).join(' ').trim();
+                                    if (text) {
+                                        results.push({speaker: name, text: text});
+                                    }
+                                }
+                            });
+                            return results;
+                        }
+                    """)
+                    
+                    if blocks:
+                        for b in blocks:
+                            speaker = b['speaker']
+                            text = b['text']
+                            
+                            # Deduplication logic
+                            if not transcript_data:
+                                transcript_data.append({"speaker": speaker, "text": text, "start": time.time() - start_time, "end": time.time() - start_time})
+                            else:
+                                last = transcript_data[-1]
+                                if last['speaker'] == speaker:
+                                    # If the text is an extension of the last text, replace it
+                                    if text.startswith(last['text']) or last['text'].startswith(text[:10]):
+                                        last['text'] = text
+                                        last['end'] = time.time() - start_time
+                                    elif text not in last['text']:
+                                        transcript_data.append({"speaker": speaker, "text": text, "start": time.time() - start_time, "end": time.time() - start_time})
+                                else:
+                                    if text not in last['text'] and text != last_text:
+                                        transcript_data.append({"speaker": speaker, "text": text, "start": time.time() - start_time, "end": time.time() - start_time})
+                            last_text = text
                     
                     with open(output_json, "w") as f:
-                        json.dump(list(participants), f, indent=2)
+                        json.dump(transcript_data, f, indent=2)
+                        
+                except Exception as e:
+                    print(f"[BOT] Caption scrape error: {e}")
                     
-                    if names:
-                        print(f"[BOT] Current participants: {', '.join(participants)}")
-                except Exception:
-                    pass
-                await asyncio.sleep(5)
+                await asyncio.sleep(2)
 
         print(f"[BOT] Recording for {duration_seconds} seconds...")
         await scrape_loop()
 
-        print("[BOT] Recording complete. Stopping ffmpeg...")
+        print("[BOT] Recording complete...")
         
-        # Stop ffmpeg gracefully
-        ffmpeg_proc.terminate()
-        try:
-            ffmpeg_proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            ffmpeg_proc.kill()
-
         try:
             await browser.close()
         except Exception as e:
             print(f"[BOT] Browser close warning: {e}")
 
-        if virtual_sink_module:
-            try:
-                subprocess.run(f"pactl unload-module {virtual_sink_module}", shell=True)
-                print("[BOT] Removed virtual PulseAudio sink.")
-            except:
-                pass
-
-        print("[BOT] Done. Audio saved to:", output_audio)
-        print("[BOT] Participants saved to:", output_json)
+        print("[BOT] Done. Transcript saved to:", output_json)
 
 if __name__ == "__main__":
-    if len(sys.argv) < 5:
-        print("Usage: python bot.py <meet_url> <output_audio> <output_json> <duration_sec>")
+    if len(sys.argv) < 4:
+        print("Usage: python bot.py <meet_url> <output_json> <duration_sec>")
         sys.exit(1)
         
     meet_url = sys.argv[1]
-    output_audio = sys.argv[2]
-    output_json = sys.argv[3]
+    output_json = sys.argv[2]
     try:
-        duration_seconds = int(sys.argv[4])
+        duration_seconds = int(sys.argv[3])
     except ValueError:
         duration_seconds = 60
         
     try:
-        asyncio.run(start_bot(meet_url, output_audio, output_json, duration_seconds))
+        asyncio.run(start_bot(meet_url, output_json, duration_seconds))
     except Exception as e:
         print(f"[BOT] Fatal Error: {e}")
         traceback.print_exc()
