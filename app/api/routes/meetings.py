@@ -160,7 +160,7 @@ def get_meeting(meeting_id: int, db: Session = Depends(get_db)):
             {
                 "id": t.id,
                 "description": t.description,
-                "owner": t.owner.name if hasattr(t, 'owner') and t.owner else None, 
+                "owner": t.owner.name if t.owner else (t.participant.name if t.participant else "Unassigned"), 
                 "deadline": t.deadline,
                 "status": t.status.value
             } for t in meeting.tasks

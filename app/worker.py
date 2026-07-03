@@ -207,18 +207,31 @@ def process_meeting(self, meeting_id: int, bot_participants: str = None):
             owner_label = t.get("owner", "Unknown")
             owner_email = t.get("owner_email")
             assigned_user = None
+            assigned_participant = None
 
+            # 1. Look in meeting participants first
             if owner_email:
-                assigned_user = db.query(User).filter(User.email == owner_email).first()
-            if not assigned_user:
-                for u in global_users:
-                    if u.name and u.name.lower() in owner_label.lower():
-                        assigned_user = u
+                assigned_participant = next((p for p in meeting.participants if p.email == owner_email), None)
+            if not assigned_participant:
+                for p in meeting.participants:
+                    if p.name and p.name.lower() in owner_label.lower():
+                        assigned_participant = p
                         break
+            
+            # 2. Fallback to global users if not found in CSV
+            if not assigned_participant:
+                if owner_email:
+                    assigned_user = db.query(User).filter(User.email == owner_email).first()
+                if not assigned_user:
+                    for u in global_users:
+                        if u.name and u.name.lower() in owner_label.lower():
+                            assigned_user = u
+                            break
 
             new_task = Task(
                 meeting_id=meeting.id,
                 owner_id=assigned_user.id if assigned_user else None,
+                participant_id=assigned_participant.id if assigned_participant else None,
                 description=t.get("task", ""),
                 deadline=t.get("deadline"),
                 status=TaskStatus.pending
@@ -228,7 +241,16 @@ def process_meeting(self, meeting_id: int, bot_participants: str = None):
             db.refresh(new_task)
 
             # Group for emails
-            email_address = owner_email or (assigned_user.email if assigned_user else "kirito@yopmail.com")
+            email_address = None
+            if assigned_participant:
+                email_address = assigned_participant.email
+            elif assigned_user:
+                email_address = assigned_user.email
+            elif owner_email:
+                email_address = owner_email
+            else:
+                email_address = "kirito@yopmail.com" # Default fallback
+                
             if email_address not in assigned_tasks_per_user:
                 assigned_tasks_per_user[email_address] = []
             assigned_tasks_per_user[email_address].append(new_task)

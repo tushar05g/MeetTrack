@@ -77,12 +77,14 @@ class Task(Base):
     id = Column(Integer, primary_key=True, index=True)
     meeting_id = Column(Integer, ForeignKey("meetings.id"))
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    participant_id = Column(Integer, ForeignKey("meeting_participants.id"), nullable=True)
     description = Column(Text)
     deadline = Column(String, nullable=True)
     status = Column(Enum(TaskStatus), default=TaskStatus.pending)
 
     meeting = relationship("Meeting", back_populates="tasks")
     owner = relationship("User", back_populates="tasks")
+    participant = relationship("MeetingParticipant")
     followups = relationship("TaskFollowup", back_populates="task")
 
 class TaskFollowup(Base):
