@@ -1,9 +1,9 @@
 # MeetTrack: Intelligent Meeting Assistant
 
-MeetTrack is a full-stack, AI-powered meeting assistant designed to securely transcribe audio, diarize speakers (who said what when), extract actionable tasks, and automatically email participants. It features a custom Puppeteer bot that can automatically join live Google Meet sessions and record them for you!
+MeetTrack is a full-stack, AI-powered meeting assistant designed to securely transcribe audio, diarize speakers (who said what when), extract actionable tasks, and automatically email participants. It features a custom Python Playwright bot that can automatically join live Google Meet sessions and record them for you!
 
 ## Key Features
-1. **Live Meeting Bot**: A Node.js/Puppeteer headless bot that joins Google Meet, waits for admission, and records the meeting audio locally using `ffmpeg` and `pulseaudio`.
+1. **Live Meeting Bot**: A Python/Playwright headless bot that joins Google Meet, waits for admission, and records the meeting audio locally using `ffmpeg` and `pulseaudio`.
 2. **Automated Scheduling**: Connect to your Google Calendar to fetch upcoming meetings, or manually schedule the bot. Celery Beat will automatically dispatch the bot exactly 2 minutes before the meeting starts.
 3. **AI Transcription & Diarization**: High-speed speech-to-text using local `faster-whisper` and speaker identification using `pyannote-audio`, strictly constrained to run on a 4GB VRAM GPU without crashing.
 4. **Intelligent Task Extraction**: Uses the Groq API (LLaMA-3) to read the transcript and extract action items, owners, and accurate deadlines.
@@ -14,7 +14,7 @@ MeetTrack is a full-stack, AI-powered meeting assistant designed to securely tra
 - **Frontend**: React.js, Vite, Lucide Icons (Glassmorphic modern UI)
 - **Backend API**: FastAPI (Python), SQLAlchemy, PostgreSQL
 - **Background Tasks**: Celery, Celery Beat, Redis
-- **Live Bot**: Node.js, Puppeteer, FFmpeg, PulseAudio
+- **Live Bot**: Python, Playwright, FFmpeg, PulseAudio
 - **AI Models**: Faster-Whisper, PyAnnote, Groq API
 
 ---
@@ -34,19 +34,16 @@ Create the Conda environment and install all Python dependencies:
 conda create -n meettrack python=3.11 -y
 conda activate meettrack
 
-# Install core libraries
-pip install fastapi uvicorn celery python-multipart redis python-dotenv psycopg2-binary sqlalchemy alembic requests groq passlib
+# Install dependencies using the requirements file
+pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu121
 
-# Install ML libraries (PyTorch 2.1.2 is required for older GPUs like GTX 1050 Ti)
-pip install torch==2.1.2 torchvision==0.16.2 torchaudio==2.1.2 --index-url https://download.pytorch.org/whl/cu121
-pip install "transformers<4.38.0" "numpy<2.0.0" faster-whisper whisperx
+# Install Playwright browsers (Required for the bot)
+playwright install chromium
 ```
 
-Install Frontend and Bot dependencies:
+Install Frontend dependencies:
 ```bash
 cd frontend
-npm install
-cd ../bot
 npm install
 cd ..
 ```
