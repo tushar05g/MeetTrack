@@ -18,8 +18,8 @@ from app.services.extract_tasks import extract_tasks_from_transcript
 
 celery_app = Celery(
     "meettrack",
-    broker="redis://localhost:6379/0",
-    backend="redis://localhost:6379/0"
+    broker=os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0"),
+    backend=os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
 )
 
 # Configure Celery Beat to run everyday at 9:00 AM
@@ -71,15 +71,8 @@ def run_bot_and_process(meeting_id: int, meet_url: str, duration_seconds: int = 
         meeting.audio_file_path = output_audio
         db.commit()
         
-        participants_list = None
-        if os.path.exists(output_json):
-            with open(output_json, "r") as f:
-                parts = json.load(f)
-                if parts:
-                    participants_list = ", ".join(parts)
-        
         db.close()
-        process_meeting.delay(meeting_id, bot_participants=participants_list)
+        process_meeting.delay(meeting_id)
 
     except Exception as e:
         print(f"Error running bot: {e}")
@@ -90,7 +83,7 @@ def run_bot_and_process(meeting_id: int, meet_url: str, duration_seconds: int = 
         db.close()
 
 @celery_app.task(name="process_meeting", bind=True)
-def process_meeting(self, meeting_id: int, bot_participants: str = None):
+def process_meeting(self, meeting_id: int):
     db = SessionLocal()
     try:
         meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
@@ -102,31 +95,82 @@ def process_meeting(self, meeting_id: int, bot_participants: str = None):
         meeting.status = MeetingStatus.processing
         db.commit()
 
-        # Step 1: Transcribe
+        # Step 1: Transcribe (Always run Whisper to get multilingual raw text)
         print("[STEP 1] Transcribing audio...")
         raw_segments = transcribe_audio(meeting.audio_file_path)
 
         if not raw_segments:
             print("[STEP 1] No speech detected in audio (silent meeting). Marking as done.")
-            # Save empty transcript so the meeting record is complete
             transcript = Transcript(meeting_id=meeting.id, full_text="[No speech detected]", segments=[])
             db.add(transcript)
             meeting.status = MeetingStatus.done
             db.commit()
             return
 
-        # Step 2: Diarize
-        print("[STEP 2] Diarizing audio...")
+        # Load CC data if this was a bot meeting
+        output_json = os.path.join(os.path.dirname(os.path.dirname(__file__)), "app", "uploads", f"bot_meeting_{meeting.id}.json")
+        bot_transcript_data = None
+        bot_participants = None
+        
+        if os.path.exists(output_json):
+            try:
+                with open(output_json, "r") as f:
+                    data = json.load(f)
+                    if data and isinstance(data, list) and isinstance(data[0], dict):
+                        bot_transcript_data = data
+                        bot_participants = ", ".join(list(set(d.get('speaker', 'Unknown') for d in data)))
+            except Exception as e:
+                print(f"Error loading bot JSON: {e}")
+
+        # Step 2: Diarize (ALWAYS run Pyannote to group voices)
+        print("[STEP 2] Diarizing audio using Pyannote...")
         try:
             diarized_segments = diarize_audio(meeting.audio_file_path, raw_segments)
         except Exception as diarize_err:
             print(f"[STEP 2] Diarization failed ({diarize_err}), falling back to raw transcription without speaker labels.")
             traceback.print_exc()
-            # Fall back: add a default speaker label to raw segments
             diarized_segments = [
                 {**seg, "speaker": seg.get("speaker", "SPEAKER_00")}
                 for seg in raw_segments
             ]
+
+        # Step 3: Tri-Factor Name Mapping
+        if bot_transcript_data:
+            print("[STEP 3] Live CC transcript found! Mapping Pyannote acoustic labels to CC names via time-overlap voting...")
+            
+            speaker_votes = {}
+            
+            # Vote: Match Pyannote segments to CC segments
+            for d_seg in diarized_segments:
+                py_speaker = d_seg.get('speaker', 'SPEAKER_00')
+                d_start = d_seg.get('start', 0)
+                d_end = d_seg.get('end', 0)
+                
+                for c_seg in bot_transcript_data:
+                    c_start = c_seg.get('start', 0)
+                    c_end = c_seg.get('end', 0)
+                    
+                    overlap = max(0, min(d_end, c_end) - max(d_start, c_start))
+                    if overlap > 0.5: # Require at least 0.5s overlap for a vote
+                        cc_speaker = c_seg.get('speaker', 'Unknown')
+                        if py_speaker not in speaker_votes:
+                            speaker_votes[py_speaker] = {}
+                        speaker_votes[py_speaker][cc_speaker] = speaker_votes[py_speaker].get(cc_speaker, 0) + overlap
+            
+            # Resolve votes
+            final_mapping = {}
+            for py_spk, votes in speaker_votes.items():
+                if votes:
+                    # Pick the CC name that had the most overlap time with this Pyannote label
+                    best_cc_spk = max(votes, key=votes.get)
+                    final_mapping[py_spk] = best_cc_spk
+                    print(f"Mapped {py_spk} -> {best_cc_spk}")
+            
+            # Apply mapping to ALL segments
+            for d_seg in diarized_segments:
+                py_speaker = d_seg.get('speaker', 'SPEAKER_00')
+                if py_speaker in final_mapping:
+                    d_seg['speaker'] = final_mapping[py_speaker]
 
         # Normalize segments — guard against missing keys
         full_text = "\n".join([

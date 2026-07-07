@@ -138,6 +138,19 @@ async def start_bot(meet_url, output_audio, output_json, duration_seconds):
             await page.keyboard.press("Control+d")
             await page.wait_for_timeout(500)
             await page.keyboard.press("Control+e")
+            await page.wait_for_timeout(500)
+            
+            try:
+                print("[BOT] Turning on Closed Captions...")
+                cc_btn = page.locator('button[aria-label*="Turn on captions" i], button[aria-label*="caption" i]').first
+                if await cc_btn.is_visible():
+                    await cc_btn.click()
+                    print("[BOT] Closed Captions enabled.")
+                else:
+                    print("[BOT] Could not find Closed Captions button. Pressing 'c' key as fallback.")
+                    await page.keyboard.press("c")
+            except Exception as e:
+                print(f"[BOT] Error turning on captions: {e}")
             
             try:
                 print("[BOT] Minimizing Chrome window...")
@@ -188,10 +201,12 @@ async def start_bot(meet_url, output_audio, output_json, duration_seconds):
         except Exception as e:
             print(f"[BOT] Error opening participants: {e}")
 
-        participants = set()
+        transcript_data = []
         
         async def scrape_loop():
             start_time = time.time()
+            last_text = ""
+            
             while time.time() - start_time < duration_seconds:
                 try:
                     # Detect if removed or meeting ended
@@ -200,22 +215,57 @@ async def start_bot(meet_url, output_audio, output_json, duration_seconds):
                         print("[BOT] Bot was removed or meeting ended. Stopping early.")
                         break
                 except Exception as e:
-                    print(f"[BOT] Error checking removal status: {e}")
+                    pass
                 
                 try:
-                    elements = await page.locator('[role="listitem"] span[dir="auto"], [role="listitem"] div[dir="auto"]').all_inner_texts()
-                    names = [n.strip() for n in elements if n.strip() and n.strip() != "You" and "Presentation" not in n]
-                    for name in names:
-                        participants.add(name)
+                    # Scrape Captions
+                    blocks = await page.evaluate("""
+                        () => {
+                            const results = [];
+                            const nameElements = document.querySelectorAll('.zs7s8d, .YTbUzc');
+                            nameElements.forEach(nameEl => {
+                                const name = nameEl.innerText.trim();
+                                const container = nameEl.closest('.a4cQT, div[style*="bottom"]') || nameEl.parentElement.parentElement;
+                                if (container) {
+                                    const textSpans = container.querySelectorAll('.CNusmb');
+                                    let text = Array.from(textSpans).map(span => span.innerText).join(' ').trim();
+                                    if (text) {
+                                        results.push({speaker: name, text: text});
+                                    }
+                                }
+                            });
+                            return results;
+                        }
+                    """)
+                    
+                    if blocks:
+                        for b in blocks:
+                            speaker = b['speaker']
+                            text = b['text']
+                            
+                            # Deduplication logic
+                            if not transcript_data:
+                                transcript_data.append({"speaker": speaker, "text": text, "start": time.time() - start_time, "end": time.time() - start_time})
+                            else:
+                                last = transcript_data[-1]
+                                if last['speaker'] == speaker:
+                                    if text.startswith(last['text']) or last['text'].startswith(text[:10]):
+                                        last['text'] = text
+                                        last['end'] = time.time() - start_time
+                                    elif text not in last['text']:
+                                        transcript_data.append({"speaker": speaker, "text": text, "start": time.time() - start_time, "end": time.time() - start_time})
+                                else:
+                                    if text not in last['text'] and text != last_text:
+                                        transcript_data.append({"speaker": speaker, "text": text, "start": time.time() - start_time, "end": time.time() - start_time})
+                            last_text = text
                     
                     with open(output_json, "w") as f:
-                        json.dump(list(participants), f, indent=2)
+                        json.dump(transcript_data, f, indent=2)
+                        
+                except Exception as e:
+                    print(f"[BOT] Caption scrape error: {e}")
                     
-                    if names:
-                        print(f"[BOT] Current participants: {', '.join(participants)}")
-                except Exception:
-                    pass
-                await asyncio.sleep(5)
+                await asyncio.sleep(2)
 
         print(f"[BOT] Recording for {duration_seconds} seconds...")
         await scrape_loop()

@@ -116,3 +116,20 @@ celery -A app.worker worker -B --loglevel=info --concurrency=1
 Open your browser to `http://localhost:5173`. 
 - **Upload File:** Drag and drop an existing `.mp3` or `.wav` file to process it immediately.
 - **Send Live Bot:** Paste a Google Meet link and schedule a time. The bot will automatically launch in the background 2 minutes before the meeting, wait for you to click "Ask to Join", and then silently record the audio!
+
+---
+
+## Running with Docker (Alternative)
+
+If you prefer to run the backend and worker in Docker, you can use `docker-compose`. Ensure you have Docker and NVIDIA Container Toolkit installed (you can use `scripts/install_docker.sh` to install these dependencies on Ubuntu).
+
+```bash
+# Build and start the services (Postgres, Redis, FastAPI, Celery Worker)
+docker-compose up -d --build
+
+# The frontend still needs to be run separately
+cd frontend
+npm run dev
+```
+
+> **Note:** The worker container requires an NVIDIA GPU for AI models. Ensure `nvidia-container-toolkit` is installed on your host system.

@@ -28,3 +28,8 @@ frontend/node_modules/
 *.webm
 *.wav
 token.json
+
+# User specified ignores
+*.csv
+split_reqs.py
+frozen.txt
