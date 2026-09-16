@@ -244,7 +244,8 @@ export default function Upload() {
                                     style={{ flex: 1, padding: '0.65rem 0.85rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '0.9rem', outline: 'none' }}
                                     required
                                 />
-                                <button type="button" title="Connect Google Calendar" onClick={() => window.location.href = 'http://localhost:8000/calendar/auth'}
+                                <button type="button" title="Connect Google Calendar" onClick={() => window.location.href = '/api/calendar/auth'}
+
                                     style={{ padding: '0.65rem 0.85rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', cursor: 'pointer', whiteSpace: 'nowrap', fontSize: '0.82rem', fontWeight: 500, transition: 'all 0.2s' }}
                                     onMouseOver={e => e.currentTarget.style.borderColor = 'var(--accent-color)'}
                                     onMouseOut={e => e.currentTarget.style.borderColor = 'var(--border-color)'}

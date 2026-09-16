@@ -56,7 +56,8 @@ async def start_bot(meet_url, output_audio, output_json, duration_seconds):
                 "--disable-blink-features=AutomationControlled",
                 "--disable-infobars",
                 "--lang=en-US",
-                "--window-size=1280,800"
+                "--window-size=1280,800",
+                "--disable-dev-shm-usage"
             ],
             env=env
         )
@@ -74,6 +75,8 @@ async def start_bot(meet_url, output_audio, output_json, duration_seconds):
         """)
 
         page = await context.new_page()
+        page.on("console", lambda msg: print(f"[PAGE LOG] {msg.text}"))
+        page.on("pageerror", lambda err: print(f"[PAGE ERROR] {err}"))
 
         print("[BOT] Navigating to Google Meet...")
         try:
@@ -165,7 +168,7 @@ async def start_bot(meet_url, output_audio, output_json, duration_seconds):
                 print(f"[BOT] Could not minimize window: {e}")
                 
         except Exception as e:
-            print("[BOT] Timed out waiting to be admitted.")
+            print(f"[BOT] Failed waiting to be admitted: {e}")
             await screenshot(page, "04_admission_timeout")
             await browser.close()
             if virtual_sink_module:

@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.env'))
 
 GROQ_API_URL = os.getenv("GROQ_API_URL", "https://api.groq.com/openai/v1/chat/completions")
-MODEL_NAME = os.getenv("GROQ_MODEL_NAME", "llama-3.3-70b-versatile")
+MODEL_NAME = os.getenv("GROQ_MODEL_NAME", "llama-3.1-70b-versatile")
 
 def format_transcript(segments):
     """

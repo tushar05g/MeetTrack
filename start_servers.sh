@@ -16,7 +16,7 @@ sleep 2
 alembic upgrade head
 
 # Start FastAPI and Celery in the background
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 &
+uvicorn app.main:app --host 0.0.0.0 --port 8000 &
 celery -A app.worker worker -B --loglevel=info --concurrency=1 &
 
 # Wait for background jobs
