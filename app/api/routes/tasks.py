@@ -3,7 +3,8 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from app.database import SessionLocal
-from app.models import Task, TaskStatus
+from app.models import Task, TaskStatus, Meeting, User
+from app.core.dependencies import get_current_user
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -18,8 +19,8 @@ class TaskUpdateStatus(BaseModel):
     status: TaskStatus
 
 @router.get("")
-def list_tasks(db: Session = Depends(get_db)):
-    tasks = db.query(Task).all()
+def list_tasks(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    tasks = db.query(Task).join(Meeting).filter(Meeting.owner_id == current_user.id).all()
     return [
         {
             "id": t.id,
@@ -32,8 +33,8 @@ def list_tasks(db: Session = Depends(get_db)):
     ]
 
 @router.patch("/{task_id}")
-def update_task_status(task_id: int, update: TaskUpdateStatus, db: Session = Depends(get_db)):
-    task = db.query(Task).filter(Task.id == task_id).first()
+def update_task_status(task_id: int, update: TaskUpdateStatus, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    task = db.query(Task).join(Meeting).filter(Task.id == task_id, Meeting.owner_id == current_user.id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     

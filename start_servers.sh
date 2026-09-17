@@ -13,7 +13,7 @@ pg_ctl -D $CONDA_PREFIX/var/postgres -l $CONDA_PREFIX/var/postgres/server.log st
 sleep 2
 
 # Migrations
-alembic upgrade head
+# alembic upgrade head (Not used, tables created via SQLAlchemy directly)
 
 # Start FastAPI and Celery in the background
 uvicorn app.main:app --host 0.0.0.0 --port 8000 &

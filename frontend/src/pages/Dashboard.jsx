@@ -1,13 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api';
-import { Video, AlertCircle } from 'lucide-react';
+import { Video, AlertCircle, Mic } from 'lucide-react';
 
 export default function Dashboard() {
     const [meetings, setMeetings] = useState([]);
     const [openTasks, setOpenTasks] = useState(0);
     const [totalMeetings, setTotalMeetings] = useState(0);
     const [loading, setLoading] = useState(true);
+    const [email, setEmail] = useState('');
+    const [voiceFile, setVoiceFile] = useState(null);
+    const [uploadingVoice, setUploadingVoice] = useState(false);
 
     useEffect(() => {
         // Fetch all meetings to derive stats
@@ -26,6 +29,30 @@ export default function Dashboard() {
             })
             .catch(err => console.error("Error fetching tasks", err));
     }, []);
+
+    const handleVoiceUpload = (e) => {
+        e.preventDefault();
+        if (!voiceFile || !email) {
+            alert("Please provide an email and select an audio file.");
+            return;
+        }
+        setUploadingVoice(true);
+        const formData = new FormData();
+        formData.append('email', email);
+        formData.append('file', voiceFile);
+        
+        api.post('/users/voice_profile', formData)
+            .then(res => {
+                alert(res.data.message);
+                setVoiceFile(null);
+                setEmail('');
+            })
+            .catch(err => {
+                console.error(err);
+                alert("Voice profile upload failed.");
+            })
+            .finally(() => setUploadingVoice(false));
+    };
 
     if (loading) return <div style={{textAlign: 'center', marginTop: '5rem'}}>Loading...</div>;
 
@@ -54,6 +81,32 @@ export default function Dashboard() {
                         <div className="value">{openTasks}</div>
                     </div>
                 </div>
+            </div>
+            
+            <h2>Voice Biometrics Registration</h2>
+            <div className="glass-panel" style={{ marginBottom: '2.5rem', padding: '1.5rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
+                    <div className="stat-icon" style={{ background: 'rgba(255, 255, 255, 0.1)', color: 'var(--text-primary)' }}>
+                        <Mic />
+                    </div>
+                    <div>
+                        <h4 style={{ margin: 0 }}>Register Your Voice</h4>
+                        <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Upload a 30-second audio clip of your voice to be automatically identified in future meetings.</p>
+                    </div>
+                </div>
+                <form onSubmit={handleVoiceUpload} style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                    <div className="form-group" style={{ flex: 1, minWidth: '200px', margin: 0 }}>
+                        <label>Your Email</label>
+                        <input type="email" className="input" placeholder="you@example.com" value={email} onChange={e => setEmail(e.target.value)} required />
+                    </div>
+                    <div className="form-group" style={{ flex: 1, minWidth: '250px', margin: 0 }}>
+                        <label>Voice Sample (WAV/MP3)</label>
+                        <input type="file" className="input" accept="audio/*" onChange={e => setVoiceFile(e.target.files[0])} required />
+                    </div>
+                    <button type="submit" className="btn btn-primary" disabled={uploadingVoice} style={{ height: '42px' }}>
+                        {uploadingVoice ? 'Uploading...' : 'Register Voice'}
+                    </button>
+                </form>
             </div>
 
             <h2>Recent Meetings</h2>

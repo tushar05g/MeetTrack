@@ -1,7 +1,8 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useContext } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api';
 import { UploadCloud, Hourglass, Mic, Wand2, CheckCircle2, RefreshCw, XCircle } from 'lucide-react';
+import { AuthContext } from '../context/AuthContext';
 
 export default function Upload() {
     const [file, setFile] = useState(null);
@@ -9,14 +10,26 @@ export default function Upload() {
     const [status, setStatus] = useState('idle'); // idle, uploading, pending, transcribing, extracting, done, failed
     const [meetingId, setMeetingId] = useState(null);
     const fileInputRef = useRef(null);
+    const { token } = useContext(AuthContext);
 
     const [activeTab, setActiveTab] = useState('upload'); // 'upload' or 'bot'
     const [meetUrl, setMeetUrl] = useState('');
     const [scheduledTime, setScheduledTime] = useState('');
     const [botDuration, setBotDuration] = useState(60);
     const [botStatus, setBotStatus] = useState('idle');
+    const [botEmail, setBotEmail] = useState('');
+    const [botPassword, setBotPassword] = useState('');
     const [csvFile, setCsvFile] = useState(null);
     const [fetchedAttendees, setFetchedAttendees] = useState([]);
+    const [calendarConnected, setCalendarConnected] = useState(false);
+    const BOT_EMAIL = 'meettrack-bot@gmail.com'; // Shown to user as a fallback tip
+
+    // Check if calendar is connected
+    React.useEffect(() => {
+        api.get('/calendar/status')
+            .then(res => setCalendarConnected(res.data.connected))
+            .catch(() => {});
+    }, []);
 
     const handleFileChange = (e) => {
         if (e.target.files && e.target.files.length > 0) {
@@ -66,6 +79,10 @@ export default function Upload() {
         const formData = new FormData();
         formData.append('meet_url', meetUrl);
         formData.append('duration_seconds', botDuration);
+        if (botEmail && botPassword) {
+            formData.append('bot_email', botEmail);
+            formData.append('bot_password', botPassword);
+        }
         if (scheduledTime) {
             formData.append('scheduled_time', new Date(scheduledTime).toISOString());
         }
@@ -78,7 +95,11 @@ export default function Upload() {
                 headers: { 'Content-Type': 'multipart/form-data' }
             });
             setMeetingId(res.data.meeting_id);
-            setStatus('pending'); 
+            if (res.data.scheduled) {
+                setStatus('scheduled');
+            } else {
+                setStatus('pending');
+            }
             setActiveTab('upload'); 
             pollStatus(res.data.meeting_id);
         } catch (err) {
@@ -120,7 +141,11 @@ export default function Upload() {
             const res = await api.get(`/meetings/${id}`);
             setStatus(res.data.status);
             
-            if (res.data.status !== 'done' && res.data.status !== 'failed') {
+            if (res.data.status === 'scheduled') {
+                // Poll slower if waiting for a scheduled meeting (every 30s)
+                setTimeout(() => pollStatus(id), 30000);
+            } else if (res.data.status !== 'done' && res.data.status !== 'failed') {
+                // Poll fast if actively processing (every 5s)
                 setTimeout(() => pollStatus(id), 5000);
             }
         } catch (err) {
@@ -225,10 +250,28 @@ export default function Upload() {
                     ) : (
                     <form onSubmit={handleBotSubmit}>
                         {/* Header */}
-                        <div style={{ marginBottom: '1.5rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border-color)' }}>
+                        <div style={{ marginBottom: '1.25rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border-color)' }}>
                             <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600 }}>Send Bot to Google Meet</h3>
                             <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>The bot will join the meeting and record audio automatically.</p>
                         </div>
+
+                        {/* Bot Access Info Banner */}
+                        {calendarConnected ? (
+                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem', padding: '0.85rem 1rem', borderRadius: '10px', background: 'rgba(34, 197, 94, 0.08)', border: '1px solid rgba(34, 197, 94, 0.3)', marginBottom: '1.25rem' }}>
+                                <span style={{ fontSize: '1.1rem', flexShrink: 0 }}>✅</span>
+                                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                                    <strong style={{ color: 'var(--text-primary)' }}>Calendar Connected</strong> — When you click "Auto-fill", the bot will automatically be added as a guest to your calendar event. No manual setup needed!
+                                </div>
+                            </div>
+                        ) : (
+                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem', padding: '0.85rem 1rem', borderRadius: '10px', background: 'rgba(251, 191, 36, 0.08)', border: '1px solid rgba(251, 191, 36, 0.3)', marginBottom: '1.25rem' }}>
+                                <span style={{ fontSize: '1.1rem', flexShrink: 0 }}>💡</span>
+                                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                                    <strong style={{ color: 'var(--text-primary)' }}>For restricted meetings:</strong> Add <code style={{ background: 'rgba(139,92,246,0.15)', padding: '0.1rem 0.4rem', borderRadius: '4px', color: 'var(--accent-color)', fontFamily: 'monospace' }}>{BOT_EMAIL}</code> as a guest to your Google Calendar event. This ensures the bot can join without being held in the waiting room.
+                                    {' '}<button type="button" onClick={() => window.location.href = `http://localhost:8000/api/calendar/auth?token=${token}`} style={{ background: 'none', border: 'none', color: 'var(--accent-color)', cursor: 'pointer', padding: 0, fontSize: '0.85rem', textDecoration: 'underline' }}>Connect Calendar to automate this →</button>
+                                </div>
+                            </div>
+                        )}
 
                         {/* Section 1: Meeting URL */}
                         <div style={{ marginBottom: '1.25rem' }}>
@@ -244,7 +287,7 @@ export default function Upload() {
                                     style={{ flex: 1, padding: '0.65rem 0.85rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '0.9rem', outline: 'none' }}
                                     required
                                 />
-                                <button type="button" title="Connect Google Calendar" onClick={() => window.location.href = '/api/calendar/auth'}
+                                <button type="button" title="Connect Google Calendar" onClick={() => window.location.href = `http://localhost:8000/api/calendar/auth?token=${token}`}
 
                                     style={{ padding: '0.65rem 0.85rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', cursor: 'pointer', whiteSpace: 'nowrap', fontSize: '0.82rem', fontWeight: 500, transition: 'all 0.2s' }}
                                     onMouseOver={e => e.currentTarget.style.borderColor = 'var(--accent-color)'}
@@ -261,6 +304,8 @@ export default function Upload() {
                                 </button>
                             </div>
                         </div>
+
+                        {/* Bot credentials are now handled via persistent bot_profile - no need to expose them in UI */}
 
                         {/* Section 2: Schedule + Duration side by side */}
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.25rem' }}>
@@ -349,32 +394,43 @@ export default function Upload() {
                     )
                 ) : (
                     <div style={{ paddingTop: '2rem' }}>
-                        <h3 style={{ textAlign: 'center', marginBottom: '1.5rem' }}>Processing Status</h3>
+                        <h3 style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
+                            {status === 'scheduled' ? 'Bot Scheduled' : 'Processing Status'}
+                        </h3>
                         
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxWidth: '400px', margin: '0 auto' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', opacity: currentStepIndex >= 0 ? 1 : 0.4 }}>
-                                {currentStepIndex > 0 ? <CheckCircle2 color="var(--success-color)" /> : currentStepIndex === 0 ? <RefreshCw className="spin" color="var(--accent-color)" /> : <Hourglass />}
-                                <span style={{ fontWeight: 500 }}>Pending in Queue</span>
+                        {status === 'scheduled' ? (
+                            <div style={{ textAlign: 'center', margin: '2rem 0', padding: '2rem', background: 'rgba(139,92,246,0.05)', borderRadius: '16px', border: '1px solid rgba(139,92,246,0.2)' }}>
+                                <div style={{ fontSize: '3.5rem', marginBottom: '1rem', animation: 'bounce 2s infinite' }}>⏰</div>
+                                <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '1.2rem', color: 'var(--text-primary)' }}>Meeting Scheduled Successfully</h4>
+                                <p style={{ color: 'var(--text-secondary)', margin: '0 0 1rem 0' }}>The bot will automatically launch 2 minutes before the meeting starts.</p>
+                                <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', margin: 0, opacity: 0.8 }}>You can safely close this page and check back on your Dashboard later.</p>
                             </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', opacity: currentStepIndex >= 1 ? 1 : 0.4 }}>
-                                {currentStepIndex > 1 ? <CheckCircle2 color="var(--success-color)" /> : currentStepIndex === 1 ? <RefreshCw className="spin" color="var(--accent-color)" /> : <Mic />}
-                                <span style={{ fontWeight: 500 }}>Transcribing & Diarizing</span>
-                            </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', opacity: currentStepIndex >= 2 ? 1 : 0.4 }}>
-                                {currentStepIndex > 2 ? <CheckCircle2 color="var(--success-color)" /> : currentStepIndex === 2 ? <RefreshCw className="spin" color="var(--accent-color)" /> : <Wand2 />}
-                                <span style={{ fontWeight: 500 }}>Extracting Action Items</span>
-                            </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', opacity: currentStepIndex >= 3 ? 1 : 0.4 }}>
-                                {currentStepIndex === 3 ? <CheckCircle2 color="var(--success-color)" /> : <CheckCircle2 />}
-                                <span style={{ fontWeight: 500 }}>Complete</span>
-                            </div>
-                            {status === 'failed' && (
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', opacity: 1 }}>
-                                    <XCircle color="var(--danger-color)" />
-                                    <span style={{ fontWeight: 500, color: 'var(--danger-color)' }}>Processing Failed</span>
+                        ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxWidth: '400px', margin: '0 auto' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', opacity: currentStepIndex >= 0 ? 1 : 0.4 }}>
+                                    {currentStepIndex > 0 ? <CheckCircle2 color="var(--success-color)" /> : currentStepIndex === 0 ? <RefreshCw className="spin" color="var(--accent-color)" /> : <Hourglass />}
+                                    <span style={{ fontWeight: 500 }}>Pending in Queue</span>
                                 </div>
-                            )}
-                        </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', opacity: currentStepIndex >= 1 ? 1 : 0.4 }}>
+                                    {currentStepIndex > 1 ? <CheckCircle2 color="var(--success-color)" /> : currentStepIndex === 1 ? <RefreshCw className="spin" color="var(--accent-color)" /> : <Mic />}
+                                    <span style={{ fontWeight: 500 }}>Transcribing & Diarizing</span>
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', opacity: currentStepIndex >= 2 ? 1 : 0.4 }}>
+                                    {currentStepIndex > 2 ? <CheckCircle2 color="var(--success-color)" /> : currentStepIndex === 2 ? <RefreshCw className="spin" color="var(--accent-color)" /> : <Wand2 />}
+                                    <span style={{ fontWeight: 500 }}>Extracting Action Items</span>
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', opacity: currentStepIndex >= 3 ? 1 : 0.4 }}>
+                                    {currentStepIndex === 3 ? <CheckCircle2 color="var(--success-color)" /> : <CheckCircle2 />}
+                                    <span style={{ fontWeight: 500 }}>Complete</span>
+                                </div>
+                                {status === 'failed' && (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', opacity: 1 }}>
+                                        <XCircle color="var(--danger-color)" />
+                                        <span style={{ fontWeight: 500, color: 'var(--danger-color)' }}>Processing Failed</span>
+                                    </div>
+                                )}
+                            </div>
+                        )}
 
                         <div style={{ textAlign: 'center', marginTop: '2.5rem' }}>
                             {status === 'done' && (

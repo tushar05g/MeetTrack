@@ -21,7 +21,7 @@ def format_transcript(segments):
         transcript_text += f"[{start:.1f}s - {end:.1f}s] {speaker}: {text}\n"
     return transcript_text
 
-def extract_tasks_from_transcript(segments, meeting_date, users_list, calendar_map_str=""):
+def extract_tasks_from_transcript(segments, meeting_date, users_list, calendar_map_str="", rag_context=""):
     """
     Pass the formatted transcript to Groq and ask it to extract action items.
     """
@@ -36,6 +36,9 @@ def extract_tasks_from_transcript(segments, meeting_date, users_list, calendar_m
     
     Calendar Reference (use this exact mapping for relative days like "Friday" or "Next Monday"):
     {calendar_map_str}
+    
+    Historical Context (Past Meetings):
+    {rag_context if rag_context else "No past meetings found."}
     
     Here is the diarized meeting transcript:
     ---

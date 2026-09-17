@@ -2,12 +2,13 @@ import os
 import shutil
 from fastapi import APIRouter, Depends, File, UploadFile, Form, HTTPException
 from datetime import date, datetime
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import desc
 
 from app.database import SessionLocal
-from app.models import Meeting, MeetingStatus, Task, TaskStatus, Transcript
+from app.models import Meeting, MeetingStatus, Task, TaskStatus, Transcript, MeetingParticipant, User
 from app.worker import process_meeting
+from app.core.dependencies import get_current_user
 import csv
 import io
 from pydantic import BaseModel
@@ -22,7 +23,8 @@ def get_db():
     finally:
         db.close()
 
-UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads")
+# Fixed: point to app/uploads/ relative to the project root
+UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "app", "uploads")
 
 def parse_participants_csv(db: Session, meeting_id: int, participants_csv: UploadFile):
     if not participants_csv:
@@ -51,8 +53,11 @@ def join_live_meeting(
     meet_url: str = Form(...),
     duration_seconds: int = Form(60),
     scheduled_time: str = Form(None),
+    bot_email: str = Form(None),
+    bot_password: str = Form(None),
     participants_csv: UploadFile = File(None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     if not meet_url:
         raise HTTPException(status_code=400, detail="Missing Google Meet URL")
@@ -67,7 +72,10 @@ def join_live_meeting(
         status=MeetingStatus.scheduled if parsed_time else MeetingStatus.pending,
         scheduled_time=parsed_time,
         meet_url=meet_url,
-        bot_duration=duration_seconds
+        bot_duration=duration_seconds,
+        bot_email=bot_email,
+        bot_password=bot_password,
+        owner_id=current_user.id
     )
     db.add(meeting)
     db.commit()
@@ -88,7 +96,8 @@ async def upload_meeting(
     file: UploadFile = File(...), 
     recorded_date: date = Form(default_factory=date.today),
     participants_csv: UploadFile = File(None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file uploaded")
@@ -107,7 +116,8 @@ async def upload_meeting(
         title=file.filename,
         audio_file_path=file_path,
         recorded_date=recorded_date,
-        status=MeetingStatus.pending
+        status=MeetingStatus.pending,
+        owner_id=current_user.id
     )
     db.add(meeting)
     db.commit()
@@ -122,8 +132,8 @@ async def upload_meeting(
     return {"message": "Meeting uploaded successfully", "meeting_id": meeting.id}
 
 @router.get("")
-def list_meetings(db: Session = Depends(get_db)):
-    meetings = db.query(Meeting).order_by(desc(Meeting.created_at)).all()
+def list_meetings(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    meetings = db.query(Meeting).filter(Meeting.owner_id == current_user.id).order_by(desc(Meeting.created_at)).all()
     
     return [
         {
@@ -135,11 +145,20 @@ def list_meetings(db: Session = Depends(get_db)):
     ]
 
 @router.get("/{meeting_id}")
-def get_meeting(meeting_id: int, db: Session = Depends(get_db)):
-    meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
+def get_meeting(meeting_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    meeting = (
+        db.query(Meeting)
+        .options(
+            joinedload(Meeting.transcript),
+            joinedload(Meeting.tasks).joinedload(Task.owner),
+            joinedload(Meeting.tasks).joinedload(Task.participant),
+        )
+        .filter(Meeting.id == meeting_id, Meeting.owner_id == current_user.id)
+        .first()
+    )
     if not meeting:
         raise HTTPException(status_code=404, detail="Meeting not found")
-        
+
     response = {
         "id": meeting.id,
         "title": meeting.title,
@@ -148,24 +167,24 @@ def get_meeting(meeting_id: int, db: Session = Depends(get_db)):
         "transcript": None,
         "tasks": []
     }
-    
+
     if meeting.transcript:
         response["transcript"] = {
             "full_text": meeting.transcript.full_text,
             "segments": meeting.transcript.segments
         }
-        
+
     if meeting.tasks:
         response["tasks"] = [
             {
                 "id": t.id,
                 "description": t.description,
-                "owner": t.owner.name if t.owner else (t.participant.name if t.participant else "Unassigned"), 
+                "owner": t.owner.name if t.owner else (t.participant.name if t.participant else "Unassigned"),
                 "deadline": t.deadline,
                 "status": t.status.value
             } for t in meeting.tasks
         ]
-        
+
     return response
 
 class MapSpeakerRequest(BaseModel):
@@ -173,8 +192,8 @@ class MapSpeakerRequest(BaseModel):
     real_name: str
 
 @router.post("/{meeting_id}/map_speaker")
-def map_speaker(meeting_id: int, request: MapSpeakerRequest, db: Session = Depends(get_db)):
-    meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
+def map_speaker(meeting_id: int, request: MapSpeakerRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    meeting = db.query(Meeting).filter(Meeting.id == meeting_id, Meeting.owner_id == current_user.id).first()
     if not meeting:
         raise HTTPException(status_code=404, detail="Meeting not found")
     

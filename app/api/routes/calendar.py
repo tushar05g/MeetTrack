@@ -1,11 +1,15 @@
 import os
 import json
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
-from datetime import datetime, timedelta
+from datetime import datetime
+from jose import jwt, JWTError
+
 from app.database import SessionLocal
-from app.models import Meeting, MeetingParticipant, MeetingStatus
+from app.models import Meeting, MeetingParticipant, MeetingStatus, User
+from app.core.dependencies import get_current_user, get_db
+from app.core.security import SECRET_KEY, ALGORITHM
 
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
@@ -13,15 +17,8 @@ from googleapiclient.discovery import build
 
 router = APIRouter(prefix="/calendar", tags=["calendar"])
 
-SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
-TOKEN_FILE = 'token.json'
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+SCOPES = ['https://www.googleapis.com/auth/calendar.events']
+BOT_EMAIL = os.getenv("BOT_EMAIL", "meettrack-bot@gmail.com")
 
 def get_client_config():
     return {
@@ -34,52 +31,100 @@ def get_client_config():
         }
     }
 
-# Global variable to store the OAuth flow state between the /auth and /callback requests
-auth_flow = None
+def get_calendar_service(user: User):
+    """Returns an authenticated Google Calendar service for a specific user, or None if not connected."""
+    if not user.google_calendar_token:
+        return None
+    try:
+        creds = Credentials.from_authorized_user_info(user.google_calendar_token, SCOPES)
+        return build('calendar', 'v3', credentials=creds)
+    except Exception:
+        return None
+
+def invite_bot_to_event(service, event_id: str):
+    """
+    Patches a Google Calendar event to add the bot email as an attendee.
+    """
+    try:
+        event = service.events().get(calendarId='primary', eventId=event_id).execute()
+        attendees = event.get('attendees', [])
+        
+        bot_emails = [a['email'] for a in attendees]
+        if BOT_EMAIL not in bot_emails:
+            attendees.append({'email': BOT_EMAIL})
+            service.events().patch(
+                calendarId='primary',
+                eventId=event_id,
+                body={'attendees': attendees},
+                sendUpdates='none'
+            ).execute()
+            print(f"[CALENDAR] Bot {BOT_EMAIL} added as guest to event {event_id}")
+            return True
+        return True
+    except Exception as e:
+        print(f"[CALENDAR] Failed to invite bot to event: {e}")
+        return False
 
 @router.get("/auth")
-def auth_google_calendar():
-    global auth_flow
+def auth_google_calendar(token: str = Query(...), db: Session = Depends(get_db)):
     if not os.getenv("GOOGLE_CLIENT_ID"):
         return {"status": "missing_credentials", "message": "GOOGLE_CLIENT_ID not set"}
 
-    # Fix: Allow http for oauthlib during local development
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        email: str = payload.get("sub")
+        if not email:
+            raise HTTPException(status_code=401, detail="Invalid token")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+        
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
     os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 
     auth_flow = Flow.from_client_config(get_client_config(), scopes=SCOPES)
     auth_flow.redirect_uri = "http://localhost:8000/calendar/callback"
     
-    auth_url, _ = auth_flow.authorization_url(prompt='consent')
+    auth_url, _ = auth_flow.authorization_url(prompt='consent', state=str(user.id))
     return RedirectResponse(url=auth_url)
 
 @router.get("/callback")
-def calendar_callback(code: str):
-    global auth_flow
-    if not auth_flow:
-        return {"status": "error", "message": "Auth flow session expired. Please click Connect Google Calendar again."}
-        
+def calendar_callback(code: str, state: str, db: Session = Depends(get_db)):
     try:
+        user_id = int(state)
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return {"status": "error", "message": "User not found from OAuth state"}
+            
         os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+        
+        auth_flow = Flow.from_client_config(get_client_config(), scopes=SCOPES)
+        auth_flow.redirect_uri = "http://localhost:8000/calendar/callback"
         auth_flow.fetch_token(code=code)
         
         creds = auth_flow.credentials
-        with open(TOKEN_FILE, 'w') as token:
-            token.write(creds.to_json())
+        user.google_calendar_token = json.loads(creds.to_json())
+        db.commit()
             
         return RedirectResponse(url="http://localhost:5173/upload?calendar=connected")
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+@router.get("/status")
+def calendar_status(current_user: User = Depends(get_current_user)):
+    """Check if Google Calendar is connected for the current user."""
+    return {"connected": current_user.google_calendar_token is not None, "bot_email": BOT_EMAIL}
+
 @router.get("/fetch_upcoming")
-def fetch_upcoming_meeting(db: Session = Depends(get_db)):
-    if not os.path.exists(TOKEN_FILE):
-        return {"status": "missing_credentials", "instructions": "Please click 'Connect Google Calendar' first to log in."}
+def fetch_upcoming_meeting(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    service = get_calendar_service(current_user)
+    if not service:
+        return {"status": "missing_credentials", "bot_email": BOT_EMAIL, "instructions": "Please click 'Connect Google Calendar' first to log in."}
         
     try:
-        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
-        service = build('calendar', 'v3', credentials=creds)
-        
-        now = datetime.utcnow().isoformat() + 'Z'  # 'Z' indicates UTC time
+        now = datetime.utcnow().isoformat() + 'Z'
         events_result = service.events().list(
             calendarId='primary', timeMin=now,
             maxResults=10, singleEvents=True,
@@ -91,7 +136,6 @@ def fetch_upcoming_meeting(db: Session = Depends(get_db)):
         if not events:
             return {"status": "error", "message": "No upcoming events found."}
             
-        # Find first event with a Google Meet link
         target_event = None
         for event in events:
             if 'hangoutLink' in event:
@@ -102,18 +146,20 @@ def fetch_upcoming_meeting(db: Session = Depends(get_db)):
             return {"status": "error", "message": "None of your upcoming events have a Google Meet link attached."}
             
         meet_url = target_event['hangoutLink']
+        event_id = target_event['id']
         attendees = target_event.get('attendees', [])
         
-        # Get start time if available
         start_time = None
         if 'start' in target_event and 'dateTime' in target_event['start']:
             start_time = target_event['start']['dateTime']
         
-        # Save to DB
+        bot_invited = invite_bot_to_event(service, event_id)
+        
         meeting = Meeting(
             title=f"Calendar Sync: {target_event.get('summary', 'Untitled')}",
             audio_file_path="", 
-            status=MeetingStatus.pending
+            status=MeetingStatus.pending,
+            owner_id=current_user.id
         )
         db.add(meeting)
         db.commit()
@@ -123,7 +169,7 @@ def fetch_upcoming_meeting(db: Session = Depends(get_db)):
         for attendee in attendees:
             email = attendee.get('email', '')
             name = attendee.get('displayName', email.split('@')[0])
-            if email:
+            if email and email != BOT_EMAIL:
                 mp = MeetingParticipant(meeting_id=meeting.id, name=name, email=email)
                 db.add(mp)
                 saved_attendees.append({"name": name, "email": email})
@@ -134,7 +180,9 @@ def fetch_upcoming_meeting(db: Session = Depends(get_db)):
             "meet_url": meet_url,
             "meeting_id": meeting.id,
             "attendees": saved_attendees,
-            "start_time": start_time
+            "start_time": start_time,
+            "bot_invited": bot_invited,
+            "bot_email": BOT_EMAIL
         }
         
     except Exception as e:

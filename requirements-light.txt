@@ -121,3 +121,12 @@ uvicorn
 vine
 wcwidth
 yarl
+websockets
+pgvector
+speechbrain
+sentence-transformers
+groq
+passlib[bcrypt]
+python-jose
+python-multipart
+email-validator

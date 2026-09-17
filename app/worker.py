@@ -15,6 +15,7 @@ from app.email_utils import send_email
 from app.services.transcribe import transcribe_audio
 from app.services.diarize import diarize_audio
 from app.services.extract_tasks import extract_tasks_from_transcript
+from app.services.rag import extract_text_embedding, find_relevant_transcripts
 
 celery_app = Celery(
     "meettrack",
@@ -55,7 +56,9 @@ def run_bot_and_process(meeting_id: int, meet_url: str, duration_seconds: int = 
         print(f"[BOT DISPATCH] Spawning Python Playwright bot for {meet_url}...")
         
         result = subprocess.run([
-            sys.executable, "bot.py", meet_url, output_audio, output_json, str(duration_seconds)
+            sys.executable, "bot.py", meet_url, output_audio, output_json,
+            str(duration_seconds), str(meeting.id),
+            meeting.bot_email or "", meeting.bot_password or ""
         ], cwd=bot_dir, capture_output=True, text=True)
         
         print("[BOT LOGS]\n", result.stdout)
@@ -190,10 +193,28 @@ def process_meeting(self, meeting_id: int):
         meeting.status = MeetingStatus.extracting
         db.commit()
         
+        # [RAG] Generate embedding and query past meetings
+        try:
+            print("[RAG] Extracting transcript text embedding...")
+            transcript_embedding = extract_text_embedding(full_text)
+            
+            print("[RAG] Finding relevant past meetings...")
+            relevant_transcripts = find_relevant_transcripts(transcript_embedding, db, meeting.id)
+            rag_context_parts = []
+            for rt in relevant_transcripts:
+                title = rt.meeting.title if rt.meeting else "Unknown Meeting"
+                rag_context_parts.append(f"Meeting: {title}\nTranscript snippet:\n{rt.full_text[:1500]}...\n")
+            rag_context = "\n".join(rag_context_parts)
+        except Exception as e:
+            print(f"[RAG] Error in embedding/RAG: {e}")
+            transcript_embedding = None
+            rag_context = ""
+        
         transcript = Transcript(
             meeting_id=meeting.id,
             full_text=full_text,
-            segments=diarized_segments
+            segments=diarized_segments,
+            embedding=transcript_embedding
         )
         db.add(transcript)
         db.commit()
@@ -220,7 +241,7 @@ def process_meeting(self, meeting_id: int):
         calendar_map_str = "\n".join(calendar_map)
         
         try:
-            parsed_tasks = extract_tasks_from_transcript(diarized_segments, meeting_date_str, users_list, calendar_map_str)
+            parsed_tasks = extract_tasks_from_transcript(diarized_segments, meeting_date_str, users_list, calendar_map_str, rag_context)
         except Exception as extract_err:
             print(f"[STEP 3] Task extraction failed ({extract_err}), continuing with no tasks.")
             traceback.print_exc()

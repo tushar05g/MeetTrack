@@ -33,3 +33,4 @@ token.json
 *.csv
 split_reqs.py
 frozen.txt
+bot_profile/
