@@ -66,7 +66,7 @@ def invite_bot_to_event(service, event_id: str):
         return False
 
 @router.get("/auth")
-def auth_google_calendar(token: str = Query(...), db: Session = Depends(get_db)):
+def auth_google_calendar(token: str = Query(...), redirect_to: str = Query("http://localhost:5173"), db: Session = Depends(get_db)):
     if not os.getenv("GOOGLE_CLIENT_ID"):
         return {"status": "missing_credentials", "message": "GOOGLE_CLIENT_ID not set"}
 
@@ -84,31 +84,63 @@ def auth_google_calendar(token: str = Query(...), db: Session = Depends(get_db))
 
     os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 
-    auth_flow = Flow.from_client_config(get_client_config(), scopes=SCOPES)
-    auth_flow.redirect_uri = "http://localhost:8000/calendar/callback"
+    import urllib.parse
+    import base64
     
-    auth_url, _ = auth_flow.authorization_url(prompt='consent', state=str(user.id))
+    state_data = {"user_id": user.id, "redirect_to": redirect_to}
+    state_str = base64.b64encode(json.dumps(state_data).encode()).decode()
+
+    params = {
+        "client_id": os.getenv("GOOGLE_CLIENT_ID"),
+        "redirect_uri": "http://localhost:8000/calendar/callback",
+        "response_type": "code",
+        "scope": " ".join(SCOPES),
+        "state": state_str,
+        "access_type": "offline",
+        "prompt": "consent"
+    }
+    auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?{urllib.parse.urlencode(params)}"
     return RedirectResponse(url=auth_url)
 
 @router.get("/callback")
 def calendar_callback(code: str, state: str, db: Session = Depends(get_db)):
     try:
-        user_id = int(state)
+        import base64
+        state_data = json.loads(base64.b64decode(state.encode()).decode())
+        user_id = int(state_data["user_id"])
+        frontend_url = state_data.get("redirect_to", "http://localhost:5173")
+        
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             return {"status": "error", "message": "User not found from OAuth state"}
             
-        os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+        import requests
+        data = {
+            "code": code,
+            "client_id": os.getenv("GOOGLE_CLIENT_ID"),
+            "client_secret": os.getenv("GOOGLE_CLIENT_SECRET"),
+            "redirect_uri": "http://localhost:8000/calendar/callback",
+            "grant_type": "authorization_code"
+        }
+        resp = requests.post("https://oauth2.googleapis.com/token", data=data)
+        if not resp.ok:
+            return {"status": "error", "message": f"Token exchange failed: {resp.text}"}
+            
+        token_data = resp.json()
         
-        auth_flow = Flow.from_client_config(get_client_config(), scopes=SCOPES)
-        auth_flow.redirect_uri = "http://localhost:8000/calendar/callback"
-        auth_flow.fetch_token(code=code)
+        creds_json = {
+            "token": token_data.get("access_token"),
+            "refresh_token": token_data.get("refresh_token"),
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "client_id": os.getenv("GOOGLE_CLIENT_ID"),
+            "client_secret": os.getenv("GOOGLE_CLIENT_SECRET"),
+            "scopes": SCOPES
+        }
         
-        creds = auth_flow.credentials
-        user.google_calendar_token = json.loads(creds.to_json())
+        user.google_calendar_token = creds_json
         db.commit()
             
-        return RedirectResponse(url="http://localhost:5173/upload?calendar=connected")
+        return RedirectResponse(url=f"{frontend_url}/upload?calendar=connected")
     except Exception as e:
         return {"status": "error", "message": str(e)}
 

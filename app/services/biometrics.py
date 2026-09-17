@@ -1,5 +1,23 @@
 import os
 import torch
+
+# Monkey-patch torch.amp for PyTorch 2.1 compatibility with newer SpeechBrain versions
+if not hasattr(torch, "amp") or not hasattr(torch.amp, "custom_fwd"):
+    if not hasattr(torch, "amp"):
+        class _Amp: pass
+        torch.amp = _Amp()
+        
+    def _custom_fwd_wrapper(*args, **kwargs):
+        kwargs.pop("device_type", None)
+        return torch.cuda.amp.custom_fwd(*args, **kwargs)
+        
+    def _custom_bwd_wrapper(*args, **kwargs):
+        kwargs.pop("device_type", None)
+        return torch.cuda.amp.custom_bwd(*args, **kwargs)
+
+    torch.amp.custom_fwd = _custom_fwd_wrapper
+    torch.amp.custom_bwd = _custom_bwd_wrapper
+
 import torchaudio
 from sqlalchemy import select
 

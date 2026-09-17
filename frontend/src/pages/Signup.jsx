@@ -22,7 +22,8 @@ export default function Signup() {
             await signup(name, email, password);
             navigate('/dashboard');
         } catch (err) {
-            setError(err.response?.data?.detail || 'Failed to create account. Please try again.');
+            const detail = err.response?.data?.detail;
+            setError(typeof detail === 'string' ? detail : 'Failed to create account. Please try again.');
         } finally {
             setIsLoading(false);
         }

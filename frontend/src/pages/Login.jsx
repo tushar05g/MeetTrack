@@ -21,7 +21,8 @@ export default function Login() {
             await login(email, password);
             navigate('/dashboard');
         } catch (err) {
-            setError(err.response?.data?.detail || 'Failed to login. Please try again.');
+            const detail = err.response?.data?.detail;
+            setError(typeof detail === 'string' ? detail : 'Failed to login. Please try again.');
         } finally {
             setIsLoading(false);
         }

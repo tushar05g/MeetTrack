@@ -22,7 +22,7 @@ export default function Upload() {
     const [csvFile, setCsvFile] = useState(null);
     const [fetchedAttendees, setFetchedAttendees] = useState([]);
     const [calendarConnected, setCalendarConnected] = useState(false);
-    const BOT_EMAIL = 'meettrack-bot@gmail.com'; // Shown to user as a fallback tip
+    const BOT_EMAIL = 'meettrack.bot@gmail.com'; // Shown to user as a fallback tip
 
     // Check if calendar is connected
     React.useEffect(() => {
@@ -132,7 +132,8 @@ export default function Upload() {
                 alert('Successfully fetched upcoming meeting from Calendar!');
             }
         } catch (err) {
-            alert('Failed to fetch from calendar');
+            console.error(err);
+            alert('Failed to fetch from calendar: ' + (err.response?.data?.message || err.message));
         }
     };
 
@@ -268,7 +269,7 @@ export default function Upload() {
                                 <span style={{ fontSize: '1.1rem', flexShrink: 0 }}>💡</span>
                                 <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
                                     <strong style={{ color: 'var(--text-primary)' }}>For restricted meetings:</strong> Add <code style={{ background: 'rgba(139,92,246,0.15)', padding: '0.1rem 0.4rem', borderRadius: '4px', color: 'var(--accent-color)', fontFamily: 'monospace' }}>{BOT_EMAIL}</code> as a guest to your Google Calendar event. This ensures the bot can join without being held in the waiting room.
-                                    {' '}<button type="button" onClick={() => window.location.href = `http://localhost:8000/api/calendar/auth?token=${token}`} style={{ background: 'none', border: 'none', color: 'var(--accent-color)', cursor: 'pointer', padding: 0, fontSize: '0.85rem', textDecoration: 'underline' }}>Connect Calendar to automate this →</button>
+                                    {' '}<button type="button" onClick={() => window.location.href = `${api.defaults.baseURL}/calendar/auth?token=${token}&redirect_to=${encodeURIComponent(window.location.origin)}`} style={{ background: 'none', border: 'none', color: 'var(--accent-color)', cursor: 'pointer', padding: 0, fontSize: '0.85rem', textDecoration: 'underline' }}>Connect Calendar to automate this →</button>
                                 </div>
                             </div>
                         )}
@@ -287,7 +288,7 @@ export default function Upload() {
                                     style={{ flex: 1, padding: '0.65rem 0.85rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '0.9rem', outline: 'none' }}
                                     required
                                 />
-                                <button type="button" title="Connect Google Calendar" onClick={() => window.location.href = `http://localhost:8000/api/calendar/auth?token=${token}`}
+                                <button type="button" title="Connect Google Calendar" onClick={() => window.location.href = `${api.defaults.baseURL}/calendar/auth?token=${token}&redirect_to=${encodeURIComponent(window.location.origin)}`}
 
                                     style={{ padding: '0.65rem 0.85rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', cursor: 'pointer', whiteSpace: 'nowrap', fontSize: '0.82rem', fontWeight: 500, transition: 'all 0.2s' }}
                                     onMouseOver={e => e.currentTarget.style.borderColor = 'var(--accent-color)'}
