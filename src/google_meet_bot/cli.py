@@ -29,13 +29,19 @@ def main():
     bot = JoinGoogleMeet()
     bot.Glogin()
     bot.turnOffMicCam(args.meet_link)
-    captions = bot.AskToJoin(audio_path, args.duration)
+    captions, speaker_timeline = bot.AskToJoin(audio_path, args.duration)
 
-    if not args.no_analysis:
-        try:
-            SpeechToText().transcribe(audio_path)
-        except Exception as e:
-            print(f"\n[Notice] Audio analysis notice: {e}")
-            print("Your speaker-attributed transcript is safely saved in 'meeting_transcript.txt' and 'meeting_transcript.json'!")
+    print("\n[Hybrid Engine] Processing audio with Whisper and aligning speaker timeline...")
+    try:
+        SpeechToText().transcribe(
+            audio_path,
+            speaker_timeline=speaker_timeline,
+            fallback_captions=captions,
+            run_summary=not args.no_analysis
+        )
+    except Exception as e:
+        print(f"\n[Notice] Audio analysis note: {e}")
+        print("Your speaker-attributed transcript is safely saved in 'meeting_transcript.txt' and 'meeting_transcript.json'!")
+
 
 

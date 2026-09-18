@@ -8,6 +8,7 @@ class CaptionReader:
     def __init__(self, driver):
         self.driver = driver
         self.transcript_data = []
+        self.speaker_timeline = []
         self.has_joined = False
 
     def enable_captions(self):
@@ -460,28 +461,27 @@ class CaptionReader:
         start_time = time.time()
         last_printed_idx = 0
 
-        # JavaScript scraper targeting Google Meet caption DOM
+        # JavaScript scraper targeting Google Meet caption DOM per discrete block
         scrape_js = """
             const results = [];
-            const nameElements = document.querySelectorAll('.zs7s8d, .YTbUzc, .jxFHg');
+            // Target individual subtitle container blocks rather than the entire call screen
+            const blocks = document.querySelectorAll('.a4cQT, div[jsname="dsyhDe"]');
 
-            nameElements.forEach(nameEl => {
-                const name = nameEl.innerText ? nameEl.innerText.trim() : '';
-                const container = nameEl.closest('.a4cQT, div[jsname="dsyhDe"], div[style*="bottom"]') || 
-                                  nameEl.parentElement.parentElement;
+            blocks.forEach(block => {
+                const nameEl = block.querySelector('.zs7s8d, .YTbUzc, .jxFHg');
+                const name = nameEl ? (nameEl.innerText || nameEl.textContent || '').trim() : '';
 
-                if (container) {
-                    const textSpans = container.querySelectorAll('.CNusmb, .iTTPOb');
-                    let text = '';
-                    if (textSpans.length > 0) {
-                        text = Array.from(textSpans).map(s => s.innerText).join(' ').trim();
-                    } else {
-                        text = container.innerText.replace(name, '').trim();
-                    }
+                const textSpans = block.querySelectorAll('.CNusmb, .iTTPOb');
+                let text = '';
+                if (textSpans.length > 0) {
+                    text = Array.from(textSpans)
+                        .map(s => (s.innerText || s.textContent || '').trim())
+                        .filter(Boolean)
+                        .join(' ');
+                }
 
-                    if (name && text) {
-                        results.push({ speaker: name, text: text });
-                    }
+                if (name && text) {
+                    results.push({ speaker: name, text: text });
                 }
             });
             return results;
@@ -503,12 +503,23 @@ class CaptionReader:
                     blocks = self.driver.execute_script(scrape_js)
 
                     if blocks:
+                        elapsed = round(time.time() - start_time, 2)
                         for b in blocks:
                             speaker = b.get('speaker', '').strip()
                             text = b.get('text', '').strip()
 
                             if not speaker or not text:
                                 continue
+
+                            # Log active speaker timeline interval for Whisper audio alignment
+                            if self.speaker_timeline and self.speaker_timeline[-1]['speaker'] == speaker and (elapsed - self.speaker_timeline[-1]['end'] < 3.0):
+                                self.speaker_timeline[-1]['end'] = elapsed
+                            else:
+                                self.speaker_timeline.append({
+                                    'speaker': speaker,
+                                    'start': max(0.0, elapsed - 1.0),
+                                    'end': elapsed
+                                })
 
                             current_ts = time.strftime("%I:%M:%S %p")
 
@@ -523,19 +534,22 @@ class CaptionReader:
 
                                 # Same speaker continues speaking
                                 if last['speaker'] == speaker:
-                                    if text.startswith(last['text']):
+                                    if text == last['text']:
+                                        continue
+                                    elif text.startswith(last['text']):
                                         last['text'] = text
                                     elif last['text'].startswith(text[:15]):
                                         last['text'] = text
                                     elif text not in last['text']:
                                         last['text'] = last['text'] + " " + text
                                 else:
-                                    # Different speaker started speaking
-                                    self.transcript_data.append({
-                                        'speaker': speaker,
-                                        'text': text,
-                                        'timestamp': current_ts
-                                    })
+                                    # Different speaker started speaking - only add if distinct
+                                    if text != last['text']:
+                                        self.transcript_data.append({
+                                            'speaker': speaker,
+                                            'text': text,
+                                            'timestamp': current_ts
+                                        })
 
                     # Print newly completed dialogue entries to console in real-time
                     if len(self.transcript_data) > 1 and len(self.transcript_data) - 1 > last_printed_idx:
@@ -583,3 +597,7 @@ class CaptionReader:
         print(f"  - TXT:  {txt_file}")
         print(f"  - JSON: {json_file}")
         return txt_file, json_file
+
+    def get_speaker_timeline(self):
+        """Returns recorded speaker timeline intervals [start, end] in seconds."""
+        return self.speaker_timeline

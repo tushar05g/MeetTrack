@@ -42,14 +42,102 @@ class SpeechToText:
             return compressed_audio_path
         return audio_file_path
 
+    def transcribe_audio_with_segments(self, audio_file_path):
+        """Transcribes audio using Whisper with verbose segment timestamps."""
+        try:
+            with open(audio_file_path, 'rb') as audio_file:
+                response = self.client.audio.transcriptions.create(
+                    file=audio_file,
+                    model=self.WHISPER_MODEL,
+                    response_format="verbose_json",
+                    timestamp_granularities=["segment"]
+                )
+            print("[Whisper] Audio transcription complete with segment timestamps.")
+            text = getattr(response, 'text', '') or (response.get('text', '') if isinstance(response, dict) else '')
+            segments = getattr(response, 'segments', []) or (response.get('segments', []) if isinstance(response, dict) else [])
+            return text, segments
+        except Exception as e:
+            print(f"[Whisper] Segment transcription error: {e}")
+            # Fallback to standard transcription
+            text = self.transcribe_audio(audio_file_path)
+            return text, []
+
     def transcribe_audio(self, audio_file_path):
-        with open(audio_file_path, 'rb') as audio_file:
-            transcript = self.client.audio.translations.create(
-                file=audio_file,
-                model=self.WHISPER_MODEL,
-            )
-            print("Transcribe: Done")
-            return transcript.text
+        try:
+            with open(audio_file_path, 'rb') as audio_file:
+                transcript = self.client.audio.transcriptions.create(
+                    file=audio_file,
+                    model=self.WHISPER_MODEL,
+                )
+                print("[Whisper] Transcribe: Done")
+                return transcript.text
+        except Exception as e:
+            print(f"[Whisper] Transcribe error: {e}")
+            return ""
+
+    def align_whisper_with_speakers(self, whisper_segments, speaker_timeline):
+        """
+        Aligns Whisper timestamped segments with Google Meet speaker intervals.
+        Produces diarized dialogue turns: [{'speaker': name, 'text': text, 'start': s, 'end': e, 'timestamp': ts}]
+        """
+        if not whisper_segments:
+            return []
+
+        aligned = []
+        for seg in whisper_segments:
+            start = getattr(seg, 'start', None) if not isinstance(seg, dict) else seg.get('start')
+            end = getattr(seg, 'end', None) if not isinstance(seg, dict) else seg.get('end')
+            text = getattr(seg, 'text', '') if not isinstance(seg, dict) else seg.get('text', '')
+            text = text.strip()
+            if not text:
+                continue
+
+            if start is None:
+                start = 0.0
+            if end is None:
+                end = start + 2.0
+
+            # Find best matching speaker in speaker_timeline based on interval overlap
+            best_speaker = None
+            max_overlap = 0.0
+
+            if speaker_timeline:
+                for item in speaker_timeline:
+                    spk = item.get('speaker', 'Speaker')
+                    s_start = item.get('start', 0.0)
+                    s_end = item.get('end', 0.0)
+
+                    overlap = max(0.0, min(end, s_end) - max(start, s_start))
+                    if overlap > max_overlap:
+                        max_overlap = overlap
+                        best_speaker = spk
+
+                # If no direct overlap, pick closest speaker in time
+                if not best_speaker:
+                    closest_diff = float('inf')
+                    for item in speaker_timeline:
+                        mid = (item.get('start', 0.0) + item.get('end', 0.0)) / 2.0
+                        diff = abs(mid - ((start + end) / 2.0))
+                        if diff < closest_diff:
+                            closest_diff = diff
+                            best_speaker = item.get('speaker', 'Speaker')
+
+            if not best_speaker:
+                best_speaker = "Speaker"
+
+            minutes = int(start // 60)
+            seconds = int(start % 60)
+            time_str = f"{minutes:02d}:{seconds:02d}"
+
+            aligned.append({
+                'speaker': best_speaker,
+                'text': text,
+                'start': round(start, 2),
+                'end': round(end, 2),
+                'timestamp': time_str
+            })
+
+        return aligned
 
     def abstract_summary_extraction(self, transcription):
         response = self.client.chat.completions.create(
@@ -143,15 +231,61 @@ class SpeechToText:
             json.dump(data, f)
         print("JSON file created successfully.")
 
-    def transcribe(self, audio_file_path):
-        audio_file_path = self.resize_audio_if_needed(audio_file_path)
-        transcription = self.transcribe_audio(audio_file_path)
-        summary = self.meeting_minutes(transcription)
-        self.store_in_json_file(summary)
+    def transcribe(self, audio_file_path, speaker_timeline=None, fallback_captions=None, run_summary=False):
+        """
+        Transcribes the meeting audio file using Whisper, aligns text with active speaker timeline,
+        and saves formatted transcript files.
+        """
+        diarized_transcript = []
+        transcription_text = ""
 
-        print(f"Abstract Summary: {summary['abstract_summary']}")
-        print(f"Key Points: {summary['key_points']}")
-        print(f"Action Items: {summary['action_items']}")
-        print(f"Sentiment: {summary['sentiment']}")
+        # Check if audio file exists and has content
+        if os.path.exists(audio_file_path) and os.path.getsize(audio_file_path) > 4000:
+            try:
+                audio_file_path = self.resize_audio_if_needed(audio_file_path)
+                full_text, segments = self.transcribe_audio_with_segments(audio_file_path)
+                transcription_text = full_text
+
+                if segments:
+                    diarized_transcript = self.align_whisper_with_speakers(segments, speaker_timeline)
+            except Exception as e:
+                print(f"[Whisper] Transcription error: {e}")
+
+        # If Whisper didn't produce segments (e.g. silent audio or API error), use fallback captions
+        if not diarized_transcript and fallback_captions:
+            print("[Whisper] Using live Google Meet caption timeline as transcript.")
+            diarized_transcript = fallback_captions
+            transcription_text = " ".join([f"{item.get('speaker', '')}: {item.get('text', '')}" for item in fallback_captions])
+
+        # Save formatted transcripts
+        if diarized_transcript:
+            txt_path = "meeting_transcript.txt"
+            json_path = "meeting_transcript.json"
+
+            with open(txt_path, "w", encoding="utf-8") as f:
+                f.write("=== HYBRID WHISPER + MEET SPEAKER TRANSCRIPT ===\n\n")
+                for item in diarized_transcript:
+                    ts = item.get('timestamp', '')
+                    spk = item.get('speaker', 'Speaker')
+                    txt = item.get('text', '')
+                    f.write(f"[{ts}] {spk}:\n{txt}\n\n")
+
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(diarized_transcript, f, indent=2, ensure_ascii=False)
+
+            print(f"[Whisper] Final transcript saved to {txt_path} and {json_path}.")
+
+        # Optional meeting minutes summary extraction
+        if run_summary and transcription_text:
+            try:
+                summary = self.meeting_minutes(transcription_text)
+                self.store_in_json_file(summary)
+                print(f"\nAbstract Summary:\n{summary.get('abstract_summary')}\n")
+                print(f"Key Points:\n{summary.get('key_points')}\n")
+                print(f"Action Items:\n{summary.get('action_items')}\n")
+            except Exception as e:
+                print(f"[Summary] Meeting minutes generation error: {e}")
+
+        return diarized_transcript
 
 

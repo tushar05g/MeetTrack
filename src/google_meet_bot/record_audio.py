@@ -1,8 +1,11 @@
 import sounddevice as sd
+import numpy as np
 from scipy.io.wavfile import write
 import os
+import threading
+import queue
+import time
 from dotenv import load_dotenv
-
 
 load_dotenv()
 
@@ -11,6 +14,12 @@ class AudioRecorder:
     def __init__(self):
         self.sample_rate = int(os.getenv('SAMPLE_RATE', 44100))
         self.device = self._find_input_device()
+        self.is_recording = False
+        self._stop_event = threading.Event()
+        self._audio_queue = queue.Queue()
+        self._record_thread = None
+        self.output_filename = None
+        self.start_time = None
 
     def _find_input_device(self):
         # 1. Custom device from .env
@@ -42,41 +51,82 @@ class AudioRecorder:
                 if dev.get('max_input_channels', 0) > 0:
                     return idx
         except Exception as e:
-            print(f"Error querying audio devices: {e}")
+            print(f"[Audio] Error querying audio devices: {e}")
 
         return None
 
-    def get_audio(self, filename, duration):
-        print("Recording...")
+    def start_recording(self, filename, max_duration=0):
+        """Starts recording audio continuously in the background until stop_recording() is called."""
+        self.output_filename = filename
+        self._stop_event.clear()
+        self.is_recording = True
+        self.start_time = time.time()
+
         if self.device is None:
-            print("Warning: No audio input device or microphone detected. Creating placeholder audio file.")
-            import numpy as np
-            empty_recording = np.zeros((int(duration * self.sample_rate), 2), dtype='int16')
-            write(filename, self.sample_rate, empty_recording)
-            print(f"Placeholder audio saved as {filename}.")
+            print("[Audio] Warning: No audio input device detected. Will generate silent placeholder on finish.")
             return
 
         try:
             device_info = sd.query_devices(self.device)
-            print(f"Recording using device #{self.device}: {device_info['name']}")
+            print(f"[Audio] Started continuous recording using #{self.device}: {device_info['name']}")
         except Exception:
-            pass
+            print(f"[Audio] Started continuous recording using device #{self.device}")
 
-        try:
-            recording = sd.rec(
-                int(duration * self.sample_rate),
-                samplerate=self.sample_rate,
-                channels=2,
-                dtype='int16',
-                device=self.device
-            )
-            sd.wait()  # Wait until the recording is finished
-            write(filename, self.sample_rate, recording)
-            print(f"Recording finished. Saved as {filename}.")
-        except Exception as e:
-            print(f"Audio recording error: {e}. Writing placeholder file so workflow continues.")
-            import numpy as np
-            empty_recording = np.zeros((int(duration * self.sample_rate), 2), dtype='int16')
-            write(filename, self.sample_rate, empty_recording)
+        def _worker():
+            chunks = []
 
+            def _callback(indata, frames, time_info, status):
+                if status:
+                    pass
+                self._audio_queue.put(indata.copy())
 
+            try:
+                with sd.InputStream(samplerate=self.sample_rate, channels=2, dtype='int16', device=self.device, callback=_callback):
+                    while not self._stop_event.is_set():
+                        if max_duration and max_duration > 0 and (time.time() - self.start_time >= max_duration):
+                            break
+                        try:
+                            chunk = self._audio_queue.get(timeout=0.2)
+                            chunks.append(chunk)
+                        except queue.Empty:
+                            pass
+
+                # Drain remaining chunks
+                while not self._audio_queue.empty():
+                    chunks.append(self._audio_queue.get_nowait())
+
+                if chunks:
+                    full_audio = np.concatenate(chunks, axis=0)
+                    write(self.output_filename, self.sample_rate, full_audio)
+                    duration_sec = len(full_audio) / self.sample_rate
+                    print(f"[Audio] Recording finished ({duration_sec:.1f}s). Saved as {self.output_filename}")
+                else:
+                    # Write brief placeholder if no chunks captured
+                    write(self.output_filename, self.sample_rate, np.zeros((self.sample_rate, 2), dtype='int16'))
+            except Exception as e:
+                print(f"[Audio] Error during audio stream capture: {e}")
+                # Fallback placeholder
+                write(self.output_filename, self.sample_rate, np.zeros((self.sample_rate, 2), dtype='int16'))
+            finally:
+                self.is_recording = False
+
+        self._record_thread = threading.Thread(target=_worker, daemon=True)
+        self._record_thread.start()
+
+    def stop_recording(self):
+        """Stops the continuous audio recording and ensures file is finalized."""
+        if not self.is_recording and (self._record_thread is None or not self._record_thread.is_alive()):
+            return
+
+        print("[Audio] Finalizing audio recording...")
+        self._stop_event.set()
+        if self._record_thread and self._record_thread.is_alive():
+            self._record_thread.join(timeout=4)
+        self.is_recording = False
+
+    def get_audio(self, filename, duration):
+        """Legacy synchronous / fixed duration wrapper."""
+        self.start_recording(filename, max_duration=duration)
+        if duration and duration > 0:
+            time.sleep(duration)
+            self.stop_recording()
