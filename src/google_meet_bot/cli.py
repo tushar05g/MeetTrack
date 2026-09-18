@@ -1,6 +1,13 @@
 import argparse
 import os
 import tempfile
+from dotenv import load_dotenv
+
+# Load .env from current directory or parent directory
+parent_env = os.path.abspath(os.path.join(os.getcwd(), "..", ".env"))
+if os.path.exists(parent_env):
+    load_dotenv(parent_env, override=True)
+load_dotenv(override=True)
 
 from .join_google_meet import JoinGoogleMeet
 from .speech_to_text import SpeechToText
