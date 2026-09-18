@@ -156,12 +156,13 @@ class CaptionReader:
         """)
         if is_already_open:
             print("[Captions] Caption language menu is already open. Selecting 'English (India)'...")
-            self._select_english_india_option()
-            time.sleep(1.5)
-            verified = self.get_caption_language_text()
-            if verified and 'india' in verified.lower():
-                print(f"[Captions] Verified: Caption language successfully changed to '{verified}'!")
-                return True
+            if self._select_english_india_option():
+                time.sleep(1.0)
+                self._close_open_dropdowns()
+                verified = self.get_caption_language_text()
+                if verified and 'india' in verified.lower():
+                    print(f"[Captions] Verified: Caption language successfully changed to '{verified}'!")
+                    return True
 
         # 2. Strategy A: Click directly on the .rHGeGc-aPP78e caption pill dropdown
         for attempt in range(1, 4):
@@ -191,7 +192,8 @@ class CaptionReader:
                 print(f"[Captions] Opened dropdown via {opened_pill}. Selecting 'English (India)'...")
                 time.sleep(1.2)
                 selected = self._select_english_india_option()
-                time.sleep(1.5)
+                time.sleep(1.0)
+                self._close_open_dropdowns()
 
                 # Strict verification: read the language indicator text
                 new_lang = self.get_caption_language_text()
@@ -239,6 +241,7 @@ class CaptionReader:
             self._close_modals()
 
         # Final Verification
+        self._close_open_dropdowns()
         final_lang = self.get_caption_language_text()
         if final_lang and 'india' in final_lang.lower():
             print(f"[Captions] Verified: Caption language confirmed as '{final_lang}'.")
@@ -252,11 +255,13 @@ class CaptionReader:
         """Finds and selects 'English (India)' from language picker/combobox and applies it."""
         try:
             # Step 1: Comprehensive JavaScript search and full event dispatch
+            # IMPORTANT: Exclude the pill button itself (.rHGeGc-aPP78e) so we only target the dropdown menu item!
             clicked_info = self.driver.execute_script("""
                 const all = Array.from(document.querySelectorAll('*'));
                 const matching = all.filter(el => {
                     const t = (el.innerText || el.textContent || '').trim().toLowerCase();
-                    return t.includes('english (india)');
+                    const inPill = el.closest('.rHGeGc-aPP78e') || el.closest('[data-tooltip-id]');
+                    return t.includes('english (india)') && !inPill;
                 });
 
                 if (matching.length === 0) return null;
@@ -295,17 +300,26 @@ class CaptionReader:
             """)
 
             if clicked_info:
-                print(f"[Captions] Dispatched click to 'English (India)' element: '{clicked_info}'.")
-                time.sleep(1.0)
+                print(f"[Captions] Clicked 'English (India)' dropdown item: '{clicked_info}'.")
+                time.sleep(0.8)
 
-            # Step 2: Also execute Selenium ActionChains click for physical mouse interaction
+            # Check if language is already switched to English (India)
+            current = self.get_caption_language_text()
+            if current and 'india' in current.lower():
+                self._close_open_dropdowns()
+                return True
+
+            # Step 2: Fallback with ActionChains ONLY if not yet switched and target is strictly inside a dropdown list
             try:
                 from selenium.webdriver.common.action_chains import ActionChains
-                elems = self.driver.find_elements(By.XPATH, "//*[contains(text(), 'English (India)')]")
+                elems = self.driver.find_elements(
+                    By.XPATH,
+                    "//*[contains(@role, 'menu') or contains(@role, 'listbox') or contains(@class, 'VfPpkd-xl07Ob') or contains(@class, 'JPdR6b')]//*[contains(text(), 'English (India)')]"
+                )
                 for el in elems:
                     try:
                         ActionChains(self.driver).move_to_element(el).click().perform()
-                        print("[Captions] ActionChains clicked 'English (India)' successfully.")
+                        print("[Captions] ActionChains clicked 'English (India)' in dropdown list.")
                         time.sleep(0.8)
                         break
                     except Exception:
@@ -329,11 +343,27 @@ class CaptionReader:
                 if (applyBtn) applyBtn.click();
             """)
             time.sleep(0.5)
+            self._close_open_dropdowns()
             return True
         except Exception as e:
             print(f"[Captions] Note during selecting English (India): {e}")
+            self._close_open_dropdowns()
         return False
 
+    def _close_open_dropdowns(self):
+        """Closes any open dropdown or popup menu without toggling the caption pill."""
+        try:
+            from selenium.webdriver.common.keys import Keys
+            has_open = self.driver.execute_script("""
+                const openItems = Array.from(document.querySelectorAll('[role="menu"], [role="listbox"], .JPdR6b, .VfPpkd-xl07Ob-XxIAqe'));
+                return openItems.some(el => el.offsetParent !== null);
+            """)
+            if has_open:
+                body = self.driver.find_element(By.TAG_NAME, 'body')
+                body.send_keys(Keys.ESCAPE)
+                time.sleep(0.3)
+        except Exception:
+            pass
 
     def _close_modals(self):
         """Closes any open menus or dialogs via Escape key."""
@@ -345,6 +375,7 @@ class CaptionReader:
             body.send_keys(Keys.ESCAPE)
         except Exception:
             pass
+
 
 
 
