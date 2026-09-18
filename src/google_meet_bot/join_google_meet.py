@@ -34,6 +34,7 @@ class JoinGoogleMeet:
         # create chrome instance
         opt = Options()
         opt.add_argument(f'--user-data-dir={profile_dir}')
+        opt.add_argument('--lang=en-IN')
         opt.add_argument('--no-first-run')
         opt.add_argument('--no-default-browser-check')
         opt.add_argument('--disable-blink-features=AutomationControlled')
@@ -41,6 +42,7 @@ class JoinGoogleMeet:
         opt.add_argument('--use-fake-ui-for-media-stream')
         opt.add_argument('--use-fake-device-for-media-stream')
         opt.add_experimental_option("prefs", {
+            "intl.accept_languages": "en-IN,en",
             "profile.default_content_setting_values.media_stream_mic": 1,
             "profile.default_content_setting_values.media_stream_camera": 1,
             "profile.default_content_setting_values.geolocation": 0,

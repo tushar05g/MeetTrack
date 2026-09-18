@@ -70,3 +70,7 @@ venv/
 .history
 .vs
 chrome_profile/
+
+# Generated transcripts and recordings
+meeting_transcript.*
+meeting_recording.*

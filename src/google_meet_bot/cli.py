@@ -16,7 +16,7 @@ from .speech_to_text import SpeechToText
 def main():
     parser = argparse.ArgumentParser(description="Join a Google Meet, record audio, and summarize it.")
     parser.add_argument("--meet-link", dest="meet_link", default=os.getenv("MEET_LINK"), help="Google Meet link")
-    parser.add_argument("--duration", dest="duration", type=int, default=int(os.getenv("RECORDING_DURATION", 60)), help="Recording duration in seconds")
+    parser.add_argument("--duration", dest="duration", type=int, default=int(os.getenv("RECORDING_DURATION", 0)), help="Recording duration in seconds (0 to stay until meeting ends)")
     parser.add_argument("--no-analysis", dest="no_analysis", action="store_true", help="Skip analysis phase")
     args = parser.parse_args()
 
