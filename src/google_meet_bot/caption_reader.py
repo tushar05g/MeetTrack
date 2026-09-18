@@ -146,6 +146,23 @@ class CaptionReader:
         else:
             print("[Captions] Language pill not immediately detected; checking overlay...")
 
+        # Check if language list is already open in the UI
+        is_already_open = self.driver.execute_script("""
+            const all = Array.from(document.querySelectorAll('*'));
+            return all.some(el => {
+                const t = (el.innerText || el.textContent || '').trim().toLowerCase();
+                return (t === 'english (india)' || t.includes('english (india)')) && el.offsetParent !== null;
+            });
+        """)
+        if is_already_open:
+            print("[Captions] Caption language menu is already open. Selecting 'English (India)'...")
+            self._select_english_india_option()
+            time.sleep(1.5)
+            verified = self.get_caption_language_text()
+            if verified and 'india' in verified.lower():
+                print(f"[Captions] Verified: Caption language successfully changed to '{verified}'!")
+                return True
+
         # 2. Strategy A: Click directly on the .rHGeGc-aPP78e caption pill dropdown
         for attempt in range(1, 4):
             print(f"[Captions] Attempt {attempt} to open language dropdown from caption pill...")
@@ -234,54 +251,89 @@ class CaptionReader:
     def _select_english_india_option(self):
         """Finds and selects 'English (India)' from language picker/combobox and applies it."""
         try:
-            # 1. Search for elements containing 'English (India)' or 'English (IN)'
-            clicked = self.driver.execute_script("""
-                const all = Array.from(document.querySelectorAll('[role="option"], [role="menuitem"], [role="menuitemradio"], [role="radio"], li, div[jsaction], span'));
-                const indiaOption = all.find(el => {
-                    const text = (el.textContent || '').trim().toLowerCase();
-                    const isTarget = text === 'english (india)' || text.includes('english (india)') || text === 'english (in)';
-                    return isTarget && el.offsetParent !== null && el.children.length <= 2;
+            # Step 1: Comprehensive JavaScript search and full event dispatch
+            clicked_info = self.driver.execute_script("""
+                const all = Array.from(document.querySelectorAll('*'));
+                const matching = all.filter(el => {
+                    const t = (el.innerText || el.textContent || '').trim().toLowerCase();
+                    return t.includes('english (india)');
                 });
 
-                if (indiaOption) {
-                    indiaOption.scrollIntoView({ block: 'center' });
-                    indiaOption.click();
-                    return 'clicked_direct_option';
-                }
+                if (matching.length === 0) return null;
 
-                // If not found directly, check if a scrollable menu container exists
-                const containers = Array.from(document.querySelectorAll('[role="menu"], [role="listbox"], .JPdR6b, .VfPpkd-xl07Ob-XxIAqe'));
-                for (const c of containers) {
-                    const items = Array.from(c.querySelectorAll('*'));
-                    const item = items.find(el => (el.textContent || '').trim().toLowerCase().includes('english (india)'));
-                    if (item) {
-                        item.scrollIntoView({ block: 'center' });
-                        item.click();
-                        return 'clicked_container_item';
+                // Find the interactive container (menuitem, option, li, etc.)
+                let target = null;
+                for (const el of matching) {
+                    const interactive = el.closest('[role="menuitemradio"], [role="menuitem"], [role="option"], [role="button"], li, div[jsaction]');
+                    if (interactive) {
+                        target = interactive;
+                        break;
                     }
                 }
+                if (!target) {
+                    target = matching[matching.length - 1];
+                }
 
-                return null;
+                target.scrollIntoView({ block: 'center', behavior: 'instant' });
+
+                // Full event sequence for Material Web components
+                const opts = { bubbles: true, cancelable: true, view: window };
+                target.dispatchEvent(new PointerEvent('pointerdown', opts));
+                target.dispatchEvent(new MouseEvent('mousedown', opts));
+                target.dispatchEvent(new PointerEvent('pointerup', opts));
+                target.dispatchEvent(new MouseEvent('mouseup', opts));
+                target.dispatchEvent(new MouseEvent('click', opts));
+                if (typeof target.click === 'function') target.click();
+
+                // Also trigger click on each matching sub-element
+                matching.forEach(el => {
+                    el.dispatchEvent(new MouseEvent('click', opts));
+                    if (typeof el.click === 'function') el.click();
+                });
+
+                return (target.innerText || target.textContent || '').trim();
             """)
 
-            if clicked:
-                print(f"[Captions] Clicked English (India) item ({clicked}).")
-                time.sleep(0.8)
+            if clicked_info:
+                print(f"[Captions] Dispatched click to 'English (India)' element: '{clicked_info}'.")
+                time.sleep(1.0)
 
-                # Check if Apply or Save button needs to be clicked
-                self.driver.execute_script("""
-                    const btns = Array.from(document.querySelectorAll('button'));
-                    const applyBtn = btns.find(b => {
-                        const text = (b.textContent || '').trim().toLowerCase();
-                        const aria = (b.getAttribute('aria-label') || '').toLowerCase();
-                        return (text === 'apply' || text.includes('apply') || aria.includes('apply')) && b.offsetParent !== null;
-                    });
-                    if (applyBtn) applyBtn.click();
-                """)
-                return True
+            # Step 2: Also execute Selenium ActionChains click for physical mouse interaction
+            try:
+                from selenium.webdriver.common.action_chains import ActionChains
+                elems = self.driver.find_elements(By.XPATH, "//*[contains(text(), 'English (India)')]")
+                for el in elems:
+                    try:
+                        ActionChains(self.driver).move_to_element(el).click().perform()
+                        print("[Captions] ActionChains clicked 'English (India)' successfully.")
+                        time.sleep(0.8)
+                        break
+                    except Exception:
+                        try:
+                            el.click()
+                            time.sleep(0.8)
+                            break
+                        except Exception:
+                            pass
+            except Exception as e:
+                print(f"[Captions] ActionChains note: {e}")
+
+            # Step 3: Check if an Apply or Save button is present and click it
+            self.driver.execute_script("""
+                const btns = Array.from(document.querySelectorAll('button'));
+                const applyBtn = btns.find(b => {
+                    const text = (b.textContent || '').trim().toLowerCase();
+                    const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+                    return (text === 'apply' || text.includes('apply') || aria.includes('apply')) && b.offsetParent !== null;
+                });
+                if (applyBtn) applyBtn.click();
+            """)
+            time.sleep(0.5)
+            return True
         except Exception as e:
             print(f"[Captions] Note during selecting English (India): {e}")
         return False
+
 
     def _close_modals(self):
         """Closes any open menus or dialogs via Escape key."""
