@@ -2,6 +2,16 @@ import os
 import gc
 import torch
 import whisperx
+import huggingface_hub
+
+# Monkey-patch hf_hub_download to handle deprecated use_auth_token
+_original_hf_hub_download = huggingface_hub.hf_hub_download
+def _patched_hf_hub_download(*args, **kwargs):
+    if "use_auth_token" in kwargs:
+        kwargs["token"] = kwargs.pop("use_auth_token")
+    return _original_hf_hub_download(*args, **kwargs)
+huggingface_hub.hf_hub_download = _patched_hf_hub_download
+
 from whisperx.diarize import DiarizationPipeline, assign_word_speakers
 
 def diarize_audio(audio_path, transcript_segments, language="en"):
@@ -33,7 +43,7 @@ def diarize_audio(audio_path, transcript_segments, language="en"):
 
     # 2. Diarize
     print("Loading diarization pipeline...")
-    diarize_model = DiarizationPipeline(token=hf_token, device=device)
+    diarize_model = DiarizationPipeline(model_name="pyannote/speaker-diarization-3.1", token=hf_token, device=device)
     
     print("Diarizing speakers...")
     diarize_segments = diarize_model(audio)

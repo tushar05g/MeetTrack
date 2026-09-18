@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 # Audio chunk settings: 5 seconds of 16kHz 16-bit mono audio
 SAMPLE_RATE = 16000
 BYTES_PER_SAMPLE = 2
-CHUNK_SECONDS = 10
+CHUNK_SECONDS = 15
 CHUNK_SIZE = SAMPLE_RATE * BYTES_PER_SAMPLE * CHUNK_SECONDS  # 160,000 bytes
 
 # Biometrics runs every 3 seconds of audio

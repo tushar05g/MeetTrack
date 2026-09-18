@@ -49,33 +49,35 @@ def run_bot_and_process(meeting_id: int, meet_url: str, duration_seconds: int = 
         if not meeting:
             return
 
-        bot_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "bot")
-        output_audio = os.path.join(os.path.dirname(os.path.dirname(__file__)), "app", "uploads", f"bot_meeting_{meeting.id}.webm")
-        output_json = os.path.join(os.path.dirname(os.path.dirname(__file__)), "app", "uploads", f"bot_meeting_{meeting.id}.json")
+        print(f"[BOT DISPATCH] Dispatching screenappai/meeting-bot for {meet_url}...")
         
-        print(f"[BOT DISPATCH] Spawning Python Playwright bot for {meet_url}...")
-        
-        result = subprocess.run([
-            sys.executable, "bot.py", meet_url, output_audio, output_json,
-            str(duration_seconds), str(meeting.id),
-            meeting.bot_email or "", meeting.bot_password or ""
-        ], cwd=bot_dir, capture_output=True, text=True)
-        
-        print("[BOT LOGS]\n", result.stdout)
-        if result.stderr:
-            print("[BOT ERROR LOGS]\n", result.stderr)
-
-        if not os.path.exists(output_audio):
-            print("Bot failed to produce audio file!")
+        import requests
+        try:
+            response = requests.post(
+                "http://meeting-bot:3000/google/join",
+                json={
+                    "url": meet_url,
+                    "name": "MeetTrack Bot",
+                    "teamId": "meettrack",
+                    "userId": str(meeting.id),
+                    "bearerToken": "none",
+                    "timezone": "UTC",
+                    "botId": f"bot_{meeting.id}"
+                },
+                timeout=10
+            )
+            print(f"[BOT DISPATCH] API Response: {response.status_code} - {response.text}")
+        except Exception as api_err:
+            print(f"[BOT DISPATCH] Failed to contact meeting-bot API: {api_err}")
             meeting.status = MeetingStatus.failed
             db.commit()
             return
             
-        meeting.audio_file_path = output_audio
-        db.commit()
+        print("[BOT] Bot dispatched successfully.")
+        print("[BOT] NOTE: The bot is asynchronous. A webhook callback must be implemented in FastAPI to trigger `process_meeting` once the recording is ready and downloaded to `meeting.audio_file_path`.")
         
-        db.close()
-        process_meeting.delay(meeting_id)
+        meeting.status = MeetingStatus.pending # Keep pending until webhook
+        db.commit()
 
     except Exception as e:
         print(f"Error running bot: {e}")

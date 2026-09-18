@@ -59,6 +59,65 @@ services:
               count: all
               capabilities: [gpu]
 
+  meeting-bot:
+    platform: linux/amd64
+    build:
+      context: ./meeting-bot
+      dockerfile: Dockerfile.development
+    env_file:
+      - ./meeting-bot/.env
+    environment:
+      - NODE_ENV=development
+      - REDIS_HOST=redis
+      - GOOGLE_CHROME_CDP_URL=http://chrome-cdp:9223
+    ports:
+      - "3000:3000"
+    extra_hosts:
+      - "host.internal:host-gateway"
+    volumes:
+      - ./meeting-bot:/usr/src/app
+      - ./meeting-bot/.chrome:/usr/src/app/.chrome
+      - ./meeting-bot/assets/screenshots:/usr/src/app/assets/screenshots
+      - ./meeting-bot/debug-videos:/usr/src/app/debug-videos
+      - /usr/src/app/node_modules
+    command: ["/bin/bash", "./start.sh"]
+    depends_on:
+      - redis
+      - chrome-cdp
+
+  chrome-cdp:
+    platform: linux/amd64
+    build:
+      context: ./meeting-bot
+      dockerfile: Dockerfile.chrome-cdp
+    shm_size: "1gb"
+    expose:
+      - "9223"
+
+  minio:
+    image: quay.io/minio/minio
+    command: server /data
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    ports:
+      - "9000:9000"
+    volumes:
+      - minio_data:/data
+
+  minio-setup:
+    image: quay.io/minio/mc
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      sleep 5;
+      mc alias set local http://minio:9000 minioadmin minioadmin;
+      mc mb local/meettrack-bot-bucket || true;
+      mc anonymous set public local/meettrack-bot-bucket || true;
+      "
+
 volumes:
   postgres_data:
   redis_data:
+  minio_data:

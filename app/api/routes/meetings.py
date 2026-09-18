@@ -91,6 +91,74 @@ def join_live_meeting(
         run_bot_and_process.delay(meeting.id, meet_url, duration_seconds)
         return {"message": "Bot dispatched to meeting", "meeting_id": meeting.id, "scheduled": False}
 
+from pydantic import BaseModel
+from typing import Optional, Dict, Any
+
+class BotWebhookPayload(BaseModel):
+    recordingId: str
+    status: str
+    meetingLink: Optional[str] = None
+    blobUrl: Optional[str] = None
+    timestamp: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+@router.post("/bot/webhook")
+def bot_webhook(payload: BotWebhookPayload, db: Session = Depends(get_db)):
+    """
+    Webhook called by screenappai/meeting-bot when it finishes recording.
+    """
+    if payload.status != "completed":
+        print(f"[WEBHOOK] Received non-completed status: {payload.status}")
+        return {"status": "ignored"}
+
+    # Extract meeting ID. We passed botId as "bot_{meeting_id}"
+    try:
+        meeting_id = int(payload.recordingId.replace("bot_", ""))
+    except ValueError:
+        print(f"[WEBHOOK] Invalid recordingId format: {payload.recordingId}")
+        raise HTTPException(status_code=400, detail="Invalid recordingId")
+
+    meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
+    if not meeting:
+        print(f"[WEBHOOK] Meeting not found: {meeting_id}")
+        raise HTTPException(status_code=404, detail="Meeting not found")
+
+    if not payload.blobUrl:
+        print(f"[WEBHOOK] No blobUrl provided for meeting {meeting_id}")
+        meeting.status = MeetingStatus.failed
+        db.commit()
+        raise HTTPException(status_code=400, detail="No blobUrl provided")
+
+    print(f"[WEBHOOK] Downloading recording from {payload.blobUrl} for meeting {meeting_id}...")
+    import requests
+    try:
+        # Download the file to the meeting's designated audio_file_path
+        output_audio = os.path.join(UPLOAD_DIR, f"bot_meeting_{meeting.id}.webm")
+        os.makedirs(UPLOAD_DIR, exist_ok=True)
+        
+        response = requests.get(payload.blobUrl, stream=True, timeout=60)
+        response.raise_for_status()
+        
+        with open(output_audio, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+                    
+        meeting.audio_file_path = output_audio
+        db.commit()
+        
+        print(f"[WEBHOOK] Successfully downloaded to {output_audio}. Triggering processing...")
+        from app.worker import process_meeting
+        process_meeting.delay(meeting.id)
+        
+        return {"status": "success", "message": "File downloaded and processing triggered."}
+        
+    except Exception as e:
+        print(f"[WEBHOOK] Failed to download file or trigger processing: {e}")
+        meeting.status = MeetingStatus.failed
+        db.commit()
+        raise HTTPException(status_code=500, detail="Internal server error")
+
 @router.post("/upload")
 async def upload_meeting(
     file: UploadFile = File(...), 
