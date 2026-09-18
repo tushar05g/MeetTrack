@@ -211,7 +211,27 @@ class JoinGoogleMeet:
 
         # Brief delay while waiting for host admission
         time.sleep(5)
-        AudioRecorder().get_audio(audio_path, duration)
+
+        # Start live caption capture and audio recording simultaneously
+        from .caption_reader import CaptionReader
+        import threading
+
+        caption_reader = CaptionReader(self.driver)
+
+        # Audio recording in background
+        audio_thread = threading.Thread(
+            target=AudioRecorder().get_audio,
+            args=(audio_path, duration),
+            daemon=True
+        )
+        audio_thread.start()
+
+        # Stream and capture speaker-attributed captions on main loop
+        captions = caption_reader.capture_during_meeting(duration)
+        caption_reader.save_transcript()
+
+        audio_thread.join(timeout=5)
+        return captions
 
 
 def _main():

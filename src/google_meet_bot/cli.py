@@ -29,9 +29,13 @@ def main():
     bot = JoinGoogleMeet()
     bot.Glogin()
     bot.turnOffMicCam(args.meet_link)
-    bot.AskToJoin(audio_path, args.duration)
+    captions = bot.AskToJoin(audio_path, args.duration)
 
     if not args.no_analysis:
-        SpeechToText().transcribe(audio_path)
+        try:
+            SpeechToText().transcribe(audio_path)
+        except Exception as e:
+            print(f"\n[Notice] Audio analysis notice: {e}")
+            print("Your speaker-attributed transcript is safely saved in 'meeting_transcript.txt' and 'meeting_transcript.json'!")
 
 
