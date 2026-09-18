@@ -4,6 +4,12 @@ from app.api.routes import meetings, tasks, calendar, users, auth
 from app.services.live_transcriber import process_audio_stream, manager
 import os
 
+from app.database import engine, Base
+import app.models
+
+# Create tables
+Base.metadata.create_all(bind=engine)
+
 app = FastAPI(title="MeetTrack API")
 
 # Ensure upload directory exists on startup

@@ -1,0 +1,15 @@
+data/
+frontend/
+meeting-bot/
+.git/
+.gitignore
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env
+*.rdb
+*.log

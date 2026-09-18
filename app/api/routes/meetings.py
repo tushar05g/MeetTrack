@@ -7,11 +7,17 @@ from sqlalchemy import desc
 
 from app.database import SessionLocal
 from app.models import Meeting, MeetingStatus, Task, TaskStatus, Transcript, MeetingParticipant, User
-from app.worker import process_meeting
 from app.core.dependencies import get_current_user
 import csv
 import io
 from pydantic import BaseModel
+from celery import Celery
+
+celery_app = Celery(
+    "meettrack",
+    broker=os.getenv("CELERY_BROKER_URL", "redis://redis:6379/0"),
+    backend=os.getenv("CELERY_RESULT_BACKEND", "redis://redis:6379/0")
+)
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
 
@@ -87,8 +93,7 @@ def join_live_meeting(
     if parsed_time:
         return {"message": "Meeting scheduled successfully", "meeting_id": meeting.id, "scheduled": True}
     else:
-        from app.worker import run_bot_and_process
-        run_bot_and_process.delay(meeting.id, meet_url, duration_seconds)
+        celery_app.send_task("run_bot_and_process", args=[meeting.id, meet_url, duration_seconds])
         return {"message": "Bot dispatched to meeting", "meeting_id": meeting.id, "scheduled": False}
 
 from pydantic import BaseModel
@@ -148,8 +153,7 @@ def bot_webhook(payload: BotWebhookPayload, db: Session = Depends(get_db)):
         db.commit()
         
         print(f"[WEBHOOK] Successfully downloaded to {output_audio}. Triggering processing...")
-        from app.worker import process_meeting
-        process_meeting.delay(meeting.id)
+        celery_app.send_task("process_meeting", args=[meeting.id])
         
         return {"status": "success", "message": "File downloaded and processing triggered."}
         
@@ -195,7 +199,7 @@ async def upload_meeting(
     parse_participants_csv(db, meeting.id, participants_csv)
     
     # Trigger Celery background task
-    process_meeting.delay(meeting.id)
+    celery_app.send_task("process_meeting", args=[meeting.id])
     
     return {"message": "Meeting uploaded successfully", "meeting_id": meeting.id}
 

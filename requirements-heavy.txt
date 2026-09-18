@@ -34,3 +34,5 @@ torchvision==0.16.2+cu121
 transformers
 triton
 
+speechbrain
+sentence-transformers

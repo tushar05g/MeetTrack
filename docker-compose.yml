@@ -71,7 +71,7 @@ services:
       - REDIS_HOST=redis
       - GOOGLE_CHROME_CDP_URL=http://chrome-cdp:9223
     ports:
-      - "3000:3000"
+      - "3005:3000"
     extra_hosts:
       - "host.internal:host-gateway"
     volumes:
