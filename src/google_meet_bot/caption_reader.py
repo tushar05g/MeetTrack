@@ -102,127 +102,173 @@ class CaptionReader:
         print("[Captions] Notice: If captions did not turn on automatically, please click the CC button in the browser.")
         return False
 
+    def get_caption_language_text(self):
+        """Reads the currently displayed caption language text from the Google Meet UI."""
+        return self.driver.execute_script("""
+            // 1. Check in .rHGeGc-aPP78e (the language pill dropdown container)
+            const pillWrapper = document.querySelector('.rHGeGc-aPP78e');
+            if (pillWrapper) {
+                const btn = pillWrapper.querySelector('button, [role="button"], [role="combobox"]') || pillWrapper;
+                const text = (btn.textContent || '').trim();
+                if (text) return text;
+            }
+
+            // 2. Search for button containing globe icon or language dropdown text
+            const buttons = Array.from(document.querySelectorAll('button, div[role="button"], div[role="combobox"]'));
+            const langBtn = buttons.find(b => {
+                const text = (b.textContent || '').trim();
+                const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+                const hasGlobe = b.innerHTML.includes('language') || b.querySelector('svg, i, span');
+                return (text.toLowerCase().includes('english') || aria.includes('language') || aria.includes('caption')) &&
+                       b.offsetParent !== null;
+            });
+            if (langBtn) {
+                return (langBtn.textContent || '').trim();
+            }
+            return null;
+        """)
+
     def set_caption_language_to_india(self):
         """
-        Switches Google Meet caption language to 'English (India)'.
-        Google Meet has a dedicated English (India) acoustic model that recognizes
-        'Am I audible', 'mic testing', and Indian pronunciation with high accuracy.
-        Because chrome_profile is persistent, Google Meet will remember this permanently.
+        Switches Google Meet caption language to 'English (India)' and strictly verifies the action.
+        Targets the .rHGeGc-aPP78e language pill directly, selects English (India), and verifies the UI text.
         """
-        print("[Captions] Checking/Setting caption language to 'English (India)'...")
-        time.sleep(1.0)
+        print("[Captions] Checking caption language indicator...")
+        time.sleep(2.0)
 
+        # 1. Check current language from the caption toolbar indicator
+        current_lang = self.get_caption_language_text()
+        if current_lang:
+            print(f"[Captions] Current caption language indicator: '{current_lang}'")
+            if 'india' in current_lang.lower():
+                print("[Captions] Verified: Caption language is already set to 'English (India)'.")
+                return True
+        else:
+            print("[Captions] Language pill not immediately detected; checking overlay...")
+
+        # 2. Strategy A: Click directly on the .rHGeGc-aPP78e caption pill dropdown
+        for attempt in range(1, 4):
+            print(f"[Captions] Attempt {attempt} to open language dropdown from caption pill...")
+            opened_pill = self.driver.execute_script("""
+                const pillWrapper = document.querySelector('.rHGeGc-aPP78e');
+                if (pillWrapper) {
+                    const trigger = pillWrapper.querySelector('button, [role="button"], [role="combobox"]') || pillWrapper;
+                    trigger.click();
+                    return 'clicked_pill_wrapper';
+                }
+
+                // Fallback: Find button with 'English' and dropdown arrow or globe
+                const btns = Array.from(document.querySelectorAll('button, div[role="button"], div[role="combobox"]'));
+                const langBtn = btns.find(b => {
+                    const text = (b.textContent || '').trim();
+                    return text.toLowerCase().includes('english') && b.offsetParent !== null;
+                });
+                if (langBtn) {
+                    langBtn.click();
+                    return 'clicked_lang_btn';
+                }
+                return null;
+            """)
+
+            if opened_pill:
+                print(f"[Captions] Opened dropdown via {opened_pill}. Selecting 'English (India)'...")
+                time.sleep(1.2)
+                selected = self._select_english_india_option()
+                time.sleep(1.5)
+
+                # Strict verification: read the language indicator text
+                new_lang = self.get_caption_language_text()
+                if new_lang and 'india' in new_lang.lower():
+                    print(f"[Captions] Verified: Caption language successfully changed to '{new_lang}'!")
+                    return True
+                else:
+                    print(f"[Captions] Indicator still displays '{new_lang or 'Unknown'}'. Retrying...")
+
+            time.sleep(1.5)
+
+        # 3. Strategy B: Fallback via 3 dots (More options) -> Captions
+        print("[Captions] Trying fallback via 3 dots (More options)...")
         try:
-            # 1. Click 3 dots button (More options)
-            opened_more = self.driver.execute_script("""
+            more_btn = self.driver.execute_script("""
                 const btns = Array.from(document.querySelectorAll('button'));
-                const moreBtn = btns.find(b => {
+                return btns.find(b => {
                     const aria = (b.getAttribute('aria-label') || '').toLowerCase();
                     const text = (b.textContent || '').toLowerCase();
                     return (aria.includes('more option') || aria.includes('more call options') || text.includes('more_vert')) && b.offsetParent !== null;
                 });
-                if (moreBtn) {
-                    moreBtn.click();
-                    return true;
-                }
-                return false;
             """)
 
-            if not opened_more:
-                print("[Captions] Could not find 3 dots 'More options' button.")
-                return False
-
-            time.sleep(1.0)
-
-            # 2. Look for 'Captions' item in the options menu
-            caption_menu_clicked = self.driver.execute_script("""
-                const items = Array.from(document.querySelectorAll('[role="menuitem"], li, div[jsaction]'));
-                const ccItem = items.find(el => {
-                    const text = (el.textContent || '').trim().toLowerCase();
-                    return (text === 'captions' || text.includes('caption') || text.includes('subtitle')) && el.offsetParent !== null;
-                });
-                if (ccItem) {
-                    ccItem.click();
-                    return true;
-                }
-                return false;
-            """)
-
-            if caption_menu_clicked:
+            if more_btn:
+                self.driver.execute_script("arguments[0].click();", more_btn)
                 time.sleep(1.0)
-                if self._select_english_india_option():
-                    print("[Captions] Caption language switched to 'English (India)'.")
-                    return True
 
-            # If 'Captions' wasn't directly in menu or didn't open language picker, check 'Settings'
-            settings_clicked = self.driver.execute_script("""
-                const items = Array.from(document.querySelectorAll('[role="menuitem"], li, div[jsaction]'));
-                const settingsItem = items.find(el => {
-                    const text = (el.textContent || '').trim().toLowerCase();
-                    return text.includes('settings') && el.offsetParent !== null;
-                });
-                if (settingsItem) {
-                    settingsItem.click();
-                    return true;
-                }
-                return false;
-            """)
-
-            if settings_clicked:
-                time.sleep(1.2)
-                # Click 'Captions' tab inside Settings modal
-                self.driver.execute_script("""
-                    const tabs = Array.from(document.querySelectorAll('[role="tab"], div[jsname], span'));
-                    const ccTab = tabs.find(el => (el.textContent || '').trim().toLowerCase() === 'captions' && el.offsetParent !== null);
-                    if (ccTab) ccTab.click();
+                caption_item = self.driver.execute_script("""
+                    const items = Array.from(document.querySelectorAll('[role="menuitem"], li, div[jsaction]'));
+                    return items.find(el => {
+                        const text = (el.textContent || '').trim().toLowerCase();
+                        return (text === 'captions' || text.includes('caption') || text.includes('subtitle')) && el.offsetParent !== null;
+                    });
                 """)
-                time.sleep(1.0)
 
-                if self._select_english_india_option():
-                    print("[Captions] Caption language set to 'English (India)' via Settings.")
-                    self._close_modals()
-                    return True
+                if caption_item:
+                    self.driver.execute_script("arguments[0].click();", caption_item)
+                    time.sleep(1.2)
+                    self._select_english_india_option()
+                    time.sleep(1.2)
 
             self._close_modals()
         except Exception as e:
-            print(f"[Captions] Note during caption language setup: {e}")
+            print(f"[Captions] Note during fallback menu navigation: {e}")
             self._close_modals()
 
-        print("[Captions] Note: Because chrome_profile is persistent, you can also change language once in Google Meet: 3 dots -> Captions -> English (India). Google Meet will remember it permanently.")
-        return False
+        # Final Verification
+        final_lang = self.get_caption_language_text()
+        if final_lang and 'india' in final_lang.lower():
+            print(f"[Captions] Verified: Caption language confirmed as '{final_lang}'.")
+            return True
+        else:
+            print(f"[Captions] Verification result: Language currently shows '{final_lang or 'English'}'.")
+            print("[Captions] Because persistent chrome_profile is active, please click on the '🌐 English ▼' dropdown once and select 'English (India)'. Google Meet will remember it permanently.")
+            return False
 
     def _select_english_india_option(self):
         """Finds and selects 'English (India)' from language picker/combobox and applies it."""
         try:
-            # Check if combobox / dropdown is present and click to expand
-            self.driver.execute_script("""
-                const boxes = Array.from(document.querySelectorAll('[role="combobox"], [role="listbox"], div[aria-haspopup="listbox"]'));
-                for (const b of boxes) {
-                    if (b.offsetParent !== null) {
-                        b.click();
-                        break;
-                    }
-                }
-            """)
-            time.sleep(0.8)
-
-            # Search for English (India) element
-            selected = self.driver.execute_script("""
-                const all = Array.from(document.querySelectorAll('[role="option"], [role="radio"], [role="menuitemradio"], li, span, div'));
+            # 1. Search for elements containing 'English (India)' or 'English (IN)'
+            clicked = self.driver.execute_script("""
+                const all = Array.from(document.querySelectorAll('[role="option"], [role="menuitem"], [role="menuitemradio"], [role="radio"], li, div[jsaction], span'));
                 const indiaOption = all.find(el => {
                     const text = (el.textContent || '').trim().toLowerCase();
-                    return (text === 'english (india)' || text.includes('english (india)')) && el.offsetParent !== null;
+                    const isTarget = text === 'english (india)' || text.includes('english (india)') || text === 'english (in)';
+                    return isTarget && el.offsetParent !== null && el.children.length <= 2;
                 });
+
                 if (indiaOption) {
+                    indiaOption.scrollIntoView({ block: 'center' });
                     indiaOption.click();
-                    return true;
+                    return 'clicked_direct_option';
                 }
-                return false;
+
+                // If not found directly, check if a scrollable menu container exists
+                const containers = Array.from(document.querySelectorAll('[role="menu"], [role="listbox"], .JPdR6b, .VfPpkd-xl07Ob-XxIAqe'));
+                for (const c of containers) {
+                    const items = Array.from(c.querySelectorAll('*'));
+                    const item = items.find(el => (el.textContent || '').trim().toLowerCase().includes('english (india)'));
+                    if (item) {
+                        item.scrollIntoView({ block: 'center' });
+                        item.click();
+                        return 'clicked_container_item';
+                    }
+                }
+
+                return null;
             """)
 
-            if selected:
+            if clicked:
+                print(f"[Captions] Clicked English (India) item ({clicked}).")
                 time.sleep(0.8)
-                # Look for Apply or Save button
+
+                # Check if Apply or Save button needs to be clicked
                 self.driver.execute_script("""
                     const btns = Array.from(document.querySelectorAll('button'));
                     const applyBtn = btns.find(b => {
@@ -230,16 +276,11 @@ class CaptionReader:
                         const aria = (b.getAttribute('aria-label') || '').toLowerCase();
                         return (text === 'apply' || text.includes('apply') || aria.includes('apply')) && b.offsetParent !== null;
                     });
-                    if (applyBtn) {
-                        applyBtn.click();
-                        return true;
-                    }
-                    return false;
+                    if (applyBtn) applyBtn.click();
                 """)
-                time.sleep(0.5)
                 return True
         except Exception as e:
-            print(f"[Captions] Note in selecting English (India): {e}")
+            print(f"[Captions] Note during selecting English (India): {e}")
         return False
 
     def _close_modals(self):
@@ -252,6 +293,7 @@ class CaptionReader:
             body.send_keys(Keys.ESCAPE)
         except Exception:
             pass
+
 
 
     def wait_until_in_call(self, timeout=45):
