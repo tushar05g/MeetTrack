@@ -44,7 +44,9 @@ def transcribe_audio(audio_path, model_size="whisper-large-v3", compute_type="in
                 }
                 data = {
                     "model": model_size,
-                    "response_format": "verbose_json"
+                    "response_format": "verbose_json",
+                    "temperature": "0.0",
+                    "prompt": "Please do not transcribe silence, background noise, or include phantom words like 'you' or 'thank you' or 'subtitles'."
                 }
                 response = requests.post(GROQ_API_URL, headers=headers, files=files, data=data)
             
@@ -58,9 +60,13 @@ def transcribe_audio(audio_path, model_size="whisper-large-v3", compute_type="in
             result = response.json()
             # Groq verbose_json returns "segments"
             chunk_segments = result.get("segments", [])
-            
+
             # Adjust timestamps by adding chunk_offset_seconds
             for seg in chunk_segments:
+                text = seg.get("text", "").strip().lower()
+                if text == "":
+                    continue
+
                 seg["start"] += chunk_offset_seconds
                 seg["end"] += chunk_offset_seconds
                 if "words" in seg:
