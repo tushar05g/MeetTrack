@@ -430,16 +430,6 @@ def check_scheduled_meetings():
 
 @celery_app.task(name="process_voice_profile")
 def process_voice_profile(user_id: int, file_path: str):
-    from app.services.biometrics import extract_voice_embedding
-    
-    db = SessionLocal()
-    try:
-        embedding = extract_voice_embedding(file_path)
-        user = db.query(User).filter(User.id == user_id).first()
-        if user:
-            user.voice_embedding = embedding
-            db.commit()
-    finally:
-        db.close()
-        if os.path.exists(file_path):
-            os.remove(file_path)
+    print("Voice biometrics are temporarily disabled in Path B (Groq API).")
+    if os.path.exists(file_path):
+        os.remove(file_path)

@@ -50,14 +50,7 @@ services:
     depends_on:
       - db
       - redis
-    # Enable NVIDIA GPU for faster-whisper and pyannote inside Docker
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+
 
   meeting-bot:
     platform: linux/amd64

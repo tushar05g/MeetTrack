@@ -2,25 +2,26 @@ import os
 from sqlalchemy import select
 from app.models import Transcript, Meeting
 
-_embedder = None
-
-def get_embedder():
-    global _embedder
-    if _embedder is None:
-        try:
-            from sentence_transformers import SentenceTransformer
-            # all-MiniLM-L6-v2 produces a 384-dimensional embedding
-            _embedder = SentenceTransformer('all-MiniLM-L6-v2')
-        except ImportError:
-            raise RuntimeError("sentence-transformers is not installed. Please install it for RAG features.")
-    return _embedder
-
 def extract_text_embedding(text: str):
     """
-    Extracts a 384-dimensional text embedding vector from a string.
+    Extracts a 384-dimensional text embedding vector from a string
+    using HuggingFace Inference API to avoid local models.
     """
-    embedder = get_embedder()
-    return embedder.encode(text)
+    hf_token = os.environ.get("HUGGINGFACE_TOKEN")
+    if not hf_token:
+        print("Warning: HUGGINGFACE_TOKEN not set, RAG is disabled.")
+        return [0.0] * 384 # Return dummy embedding
+        
+    api_url = "https://api-inference.huggingface.co/pipeline/feature-extraction/sentence-transformers/all-MiniLM-L6-v2"
+    headers = {"Authorization": f"Bearer {hf_token}"}
+    
+    import requests
+    response = requests.post(api_url, headers=headers, json={"inputs": text})
+    if response.status_code == 200:
+        return response.json()
+    else:
+        print(f"Error fetching embedding from HF: {response.text}")
+        return [0.0] * 384
 
 def find_relevant_transcripts(embedding, db_session, current_meeting_id: int, top_k=3, threshold=0.3):
     """
