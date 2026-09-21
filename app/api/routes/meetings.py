@@ -112,16 +112,25 @@ def bot_webhook(payload: BotWebhookPayload, db: Session = Depends(get_db)):
     """
     Webhook called by screenappai/meeting-bot when it finishes recording.
     """
+    print(f"[WEBHOOK] Received payload: {payload.dict()}")
+
     if payload.status != "completed":
         print(f"[WEBHOOK] Received non-completed status: {payload.status}")
         return {"status": "ignored"}
 
     # Extract meeting ID. We passed botId as "bot_{meeting_id}"
+    bot_id = None
+    if payload.metadata and "botId" in payload.metadata:
+        bot_id = payload.metadata["botId"]
+    else:
+        # Fallback to recordingId if botId is missing
+        bot_id = payload.recordingId
+
     try:
-        meeting_id = int(payload.recordingId.replace("bot_", ""))
+        meeting_id = int(bot_id.replace("bot_", ""))
     except ValueError:
-        print(f"[WEBHOOK] Invalid recordingId format: {payload.recordingId}")
-        raise HTTPException(status_code=400, detail="Invalid recordingId")
+        print(f"[WEBHOOK] Invalid botId/recordingId format: {bot_id}")
+        raise HTTPException(status_code=400, detail="Invalid botId/recordingId")
 
     meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
     if not meeting:
