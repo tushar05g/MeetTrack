@@ -50,6 +50,7 @@ export interface IUploader {
   uploadRecordingToRemoteStorage(options?: { forceUpload?: boolean }): Promise<boolean>;
   saveDataToTempFile(data: Buffer): Promise<boolean>;
   setRecordingDuration(durationSeconds: number): void;
+  logSpeakerEvent(name: string, timestamp: number): void;
 }
 
 // Save to disk and upload in one session
@@ -88,6 +89,7 @@ class DiskUploader implements IUploader {
   private diskWriteSuccess: LogAggregator;
 
   private forceUpload: boolean;
+  private speakerEvents: { name: string, timestamp: number }[] = [];
 
   private constructor(
     token: string,
@@ -337,6 +339,10 @@ class DiskUploader implements IUploader {
       userId: this._userId,
       teamId: this._teamId,
     });
+  }
+
+  public logSpeakerEvent(name: string, timestamp: number): void {
+    this.speakerEvents.push({ name, timestamp });
   }
 
   private static getFolderPath(userId: string) {
@@ -660,6 +666,27 @@ class DiskUploader implements IUploader {
         }
         const durationMs = Date.now() - startedAt;
         this._logger.info(`Object storage upload success via ${provider.name}. Duration: ${durationMs} ms, Size: unknown (streamed). Key: ${key}`);
+
+        // Write and Upload speaker_events.json
+        if (this.speakerEvents.length > 0) {
+          try {
+            const eventsFilePath = DiskUploader.getFilePath(this._userId, `${this._tempFileId}_speakers`, '.json');
+            await fs.promises.writeFile(eventsFilePath, JSON.stringify(this.speakerEvents));
+            const eventsKey = `meeting-bot/${this._userId}/${fileName}_speakers.json`;
+            
+            await provider.uploadFile({
+              filePath: eventsFilePath,
+              key: eventsKey,
+              contentType: 'application/json' as any,
+              logger: this._logger,
+              partSize: chunkSize,
+              concurrency: 2,
+            });
+            this._logger.info(`Successfully uploaded speaker_events.json via ${provider.name}. Key: ${eventsKey}`);
+          } catch (e) {
+            this._logger.error(`Failed to upload speaker_events.json via ${provider.name}`, e);
+          }
+        }
 
         // Build blobUrl + storage details for notifications
         try {

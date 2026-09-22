@@ -1,12 +1,10 @@
 def diarize_audio(audio_path, transcript_segments, language="en"):
     """
-    Since we are using Groq API and it doesn't support speaker diarization,
-    we temporarily bypass this step and assign 'Unknown Speaker' to all segments.
+    Since we are now using AssemblyAI, the 'transcript_segments' 
+    already contain the accurate speaker labels natively!
+    We can just act as a pass-through.
     """
-    for segment in transcript_segments:
-        segment["speaker"] = "Unknown Speaker"
-    
     return transcript_segments
 
 if __name__ == "__main__":
-    print("Diarization is temporarily disabled in Path B (Groq API).")
+    print("Diarization is now handled natively by AssemblyAI during transcription.")

@@ -42,7 +42,7 @@ MOCK_USER_MAPPING = {
 }
 
 @celery_app.task(name="run_bot_and_process")
-def run_bot_and_process(meeting_id: int, meet_url: str, duration_seconds: int = 60):
+def run_bot_and_process(meeting_id: int, meet_url: str):
     db = SessionLocal()
     try:
         meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
@@ -243,23 +243,15 @@ def process_meeting(self, meeting_id: int):
         calendar_map_str = "\n".join(calendar_map)
         
         try:
-            parsed_tasks = extract_tasks_from_transcript(diarized_segments, meeting_date_str, users_list, calendar_map_str, rag_context)
+            llm_result = extract_tasks_from_transcript(diarized_segments, meeting_date_str, users_list, calendar_map_str, rag_context)
+            if isinstance(llm_result, dict):
+                parsed_tasks = llm_result.get("tasks", [])
+            else:
+                parsed_tasks = llm_result
         except Exception as extract_err:
             print(f"[STEP 3] Task extraction failed ({extract_err}), continuing with no tasks.")
             traceback.print_exc()
             parsed_tasks = []
-        
-        if isinstance(parsed_tasks, dict):
-            if "task" in parsed_tasks:
-                parsed_tasks = parsed_tasks["task"]
-            elif "actionItems" in parsed_tasks:
-                parsed_tasks = parsed_tasks["actionItems"]
-            else:
-                # In case it wrapped it in some other key, try to find a list
-                for val in parsed_tasks.values():
-                    if isinstance(val, list):
-                        parsed_tasks = val
-                        break
         
         if not isinstance(parsed_tasks, list):
             parsed_tasks = []
@@ -419,7 +411,7 @@ def check_scheduled_meetings():
             db.commit()
             
             if meeting.meet_url:
-                run_bot_and_process.delay(meeting.id, meeting.meet_url, meeting.bot_duration or 60)
+                run_bot_and_process.delay(meeting.id, meeting.meet_url)
             else:
                 print(f"[SCHEDULER] Error: Meeting {meeting.id} has no meet_url.")
                 

@@ -61,9 +61,9 @@ def extract_tasks_from_transcript(segments, meeting_date, users_list, calendar_m
        - If the owner spoke in first person ("I will do X"), use the speaker label + context to identify who that is.
        - If you cannot identify a real name, use the speaker label (e.g. "SPEAKER_00") and set owner_email to null.
     
-    4. EMPTY STATE: If there are no action items, return an empty tasks array. Do NOT hallucinate tasks.
+    5. EMPTY STATE: If there are no action items, return an empty tasks array. Do NOT hallucinate tasks.
     
-    Return ONLY a valid JSON object with key "tasks" containing an array. No markdown, no backticks.
+    Return ONLY a valid JSON object with key "tasks" (array). No markdown, no backticks.
     Example:
     {{
       "tasks": [
@@ -80,30 +80,29 @@ def extract_tasks_from_transcript(segments, meeting_date, users_list, calendar_m
         "response_format": {"type": "json_object"}
     }
     
-    # Note: prompt already instructs the model to return {"tasks": [...]}
-
     headers = {
         "Authorization": f"Bearer {os.getenv('GROQ_API_KEY')}",
         "Content-Type": "application/json"
     }
     
-    print("Sending transcript to Groq for task extraction...")
+    print("Sending transcript to Groq for task extraction and transliteration...")
     response = requests.post(GROQ_API_URL, json=payload, headers=headers)
     
     if response.status_code == 200:
         result = response.json()
         raw_text = result["choices"][0]["message"]["content"]
+        print(f"[DEBUG] Raw Groq response: {raw_text[:500]}...")
         try:
             parsed = json.loads(raw_text)
-            return parsed.get("tasks", [])
+            return parsed
         except json.JSONDecodeError:
             print("Failed to parse Groq output as JSON. Raw output:")
             print(raw_text)
-            return []
+            return {"tasks": []}
     else:
         print(f"Error calling Groq API: {response.status_code}")
         print(response.text)
-        return []
+        return {"tasks": []}
 
 if __name__ == "__main__":
     # Test script with dummy segments
@@ -111,5 +110,5 @@ if __name__ == "__main__":
         {"speaker": "SPEAKER_00", "text": "Alright, let's wrap this up. Tushar, can you send me the final designs by tomorrow?", "start": 0.0, "end": 5.0},
         {"speaker": "SPEAKER_01", "text": "Sure, I will get those to you by tomorrow evening.", "start": 5.5, "end": 8.0}
     ]
-    tasks = extract_tasks_from_transcript(dummy_segments)
+    tasks = extract_tasks_from_transcript(dummy_segments, "2026-09-22", "Tushar")
     print(json.dumps(tasks, indent=2))

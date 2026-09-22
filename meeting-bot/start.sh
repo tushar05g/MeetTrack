@@ -72,4 +72,8 @@ else
     ps aux | grep pulse
 fi
 
+# Clean up leftover Xvfb lock files in case of restart
+rm -f /tmp/.X99-lock
+rm -f /tmp/.X11-unix/X99
+
 xvfb-run --server-num=99 --server-args='-screen 0 1280x800x24' npm run start

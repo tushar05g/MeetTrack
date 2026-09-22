@@ -5,7 +5,7 @@
   "main": "index.js",
   "license": "MIT",
   "scripts": {
-    "start": "nodemon --legacy-watch src/index.ts",
+    "start": "nodemon --ignore 'dist/' --ignore '*.json' --legacy-watch src/index.ts",
     "dev": "docker compose up --build",
     "stop": "docker compose down",
     "build": "tsc",
@@ -15,9 +15,13 @@
   "author": "screenappai",
   "devDependencies": {
     "@playwright/test": "^1.45.3",
+    "@types/caseless": "^0.12.5",
+    "@types/connect": "^3.4.38",
     "@types/express": "^4.17.21",
     "@types/fs-extra": "^11.0.4",
-    "@types/node": "^22.1.0",
+    "@types/json-schema": "^7.0.15",
+    "@types/ms": "^2.1.0",
+    "@types/node": "^22.20.4",
     "@types/ws": "^8.5.13",
     "@typescript-eslint/eslint-plugin": "^5.55.0",
     "@typescript-eslint/parser": "^5.55.0",

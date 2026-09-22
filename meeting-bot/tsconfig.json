@@ -16,7 +16,8 @@
       "strictNullChecks": true,
       "resolveJsonModule": true,
       "noEmitOnError": false,
-      "skipLibCheck": true
+      "skipLibCheck": true,
+      "types": ["node"]
   },
   "ts-node": {
     "files": true,

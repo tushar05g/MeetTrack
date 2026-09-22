@@ -670,6 +670,11 @@ export class GoogleMeetBot extends MeetBotBase {
       await uploader.saveDataToTempFile(buffer);
     });
 
+    await this.page.exposeFunction('screenAppLogSpeaker', async (slightlySecretId: string, name: string, timestamp: number) => {
+      if (slightlySecretId !== this.slightlySecretId) return;
+      uploader.logSpeakerEvent(name, timestamp);
+    });
+
     await this.page.exposeFunction('screenAppMeetEnd', (slightlySecretId: string, recordedDurationSeconds?: number) => {
       if (slightlySecretId !== this.slightlySecretId) return;
       try {
@@ -769,6 +774,68 @@ export class GoogleMeetBot extends MeetBotBase {
           const recordingStartedAt = Date.now();
           const initialAloneGraceMs = activateInactivityDetectionAfterMinutes * 60 * 1000;
 
+          // DOM Scraper for Active Speaker
+          let lastActiveSpeaker = "";
+          const speakerScraperInterval = setInterval(() => {
+            try {
+              // In Google Meet, the active speaker usually has the speaking animation icon or is in the main spotlight
+              // We check for the data-self-name attribute of the element that has the speaking animation
+              // A common heuristic is looking for the blue volume indicator or specific classes
+              const speakerIndicators = document.querySelectorAll('[data-is-muted="false"]');
+              
+              let foundSpeaker = "";
+              
+              // 1. Look for speaking waves (Google Meet active speaker indicator)
+              const speakingWaves = document.querySelectorAll('.I98jWb, .Jqx50b, [class*="speaking"]');
+              if (speakingWaves.length > 0) {
+                const waveElement = speakingWaves[0];
+                const container = waveElement.closest('div[data-participant-id], div[data-requested-participant-id]');
+                if (container) {
+                   // The name is usually a text node inside the container
+                   foundSpeaker = (container as HTMLElement).innerText?.trim().split('\n')[0] || "";
+                }
+              }
+
+              // 2. Look for anyone who is unmuted (has mic on)
+              if (!foundSpeaker) {
+                  const allTiles = document.querySelectorAll('div[data-participant-id], div[data-requested-participant-id]');
+                  for (let i = 0; i < allTiles.length; i++) {
+                      const tile = allTiles[i];
+                      const isMuted = tile.querySelector('[data-is-muted="true"]') !== null;
+                      if (!isMuted) {
+                          // Unmuted participant found!
+                          const name = (tile as HTMLElement).innerText?.trim().split('\n')[0];
+                          if (name && name.length > 0 && name.length < 50) {
+                              foundSpeaker = name;
+                              break;
+                          }
+                      }
+                  }
+              }
+
+              // 3. Absolute fallback: Just get the first name on the screen that isn't the bot
+              if (!foundSpeaker) {
+                  const allTiles = document.querySelectorAll('div[data-participant-id], div[data-requested-participant-id]');
+                  for (let i = 0; i < allTiles.length; i++) {
+                      const name = (allTiles[i] as HTMLElement).innerText?.trim().split('\n')[0];
+                      if (name && name.length > 0 && name.length < 50 && !name.toLowerCase().includes("bot")) {
+                          foundSpeaker = name;
+                          break;
+                      }
+                  }
+              }
+
+              // Always emit if we found someone, so we at least populate the JSON
+              if (foundSpeaker) {
+                lastActiveSpeaker = foundSpeaker;
+                const timestampSecs = Math.round((Date.now() - recordingStartedAt) / 1000);
+                (window as any).screenAppLogSpeaker(slightlySecretId, foundSpeaker, timestampSecs);
+              }
+            } catch (e) {
+              console.error("DOM Scraper error:", e);
+            }
+          }, 1000);
+
           let dismissModalsInterval: NodeJS.Timeout;
           let lastDimissError: Error | null = null;
 
@@ -794,6 +861,10 @@ export class GoogleMeetBot extends MeetBotBase {
 
               // Cleanup recording timer
               clearTimeout(timeoutId);
+              
+              if (speakerScraperInterval) {
+                clearInterval(speakerScraperInterval);
+              }
 
               // Cancel the perpetural checks
               if (inactivitySilenceDetectionTimeout) {
@@ -1132,9 +1203,9 @@ export class GoogleMeetBot extends MeetBotBase {
            */
           detectLoneParticipantResilient();
 
-          inactivitySilenceDetectionTimeout = setTimeout(() => {
-            detectIncrediblySilentMeeting();
-          }, activateInactivityDetectionAfterMinutes * 60 * 1000);
+          // inactivitySilenceDetectionTimeout = setTimeout(() => {
+          //  detectIncrediblySilentMeeting();
+          // }, activateInactivityDetectionAfterMinutes * 60 * 1000);
 
           const detectModalsAndDismiss = () => {
             let dismissModalErrorCount = 0;

@@ -78,7 +78,6 @@ export default function Upload() {
         
         const formData = new FormData();
         formData.append('meet_url', meetUrl);
-        formData.append('duration_seconds', botDuration);
         if (botEmail && botPassword) {
             formData.append('bot_email', botEmail);
             formData.append('bot_password', botPassword);
@@ -308,8 +307,8 @@ export default function Upload() {
 
                         {/* Bot credentials are now handled via persistent bot_profile - no need to expose them in UI */}
 
-                        {/* Section 2: Schedule + Duration side by side */}
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.25rem' }}>
+                        {/* Section 2: Schedule side by side */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1rem', marginBottom: '1.25rem' }}>
                             <div>
                                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.5rem', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                                     🕐 Scheduled Time <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, marginLeft: '0.25rem', color: 'var(--text-secondary)', opacity: 0.7 }}>(optional)</span>
@@ -325,24 +324,6 @@ export default function Upload() {
                                         ⏰ Bot will auto-launch 2 min before this time
                                     </p>
                                 )}
-                            </div>
-                            <div>
-                                <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.5rem', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                                    ⏱ Record Duration
-                                </label>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                    <input
-                                        type="number"
-                                        value={botDuration}
-                                        min={10}
-                                        onChange={(e) => setBotDuration(e.target.value)}
-                                        style={{ width: '100px', padding: '0.65rem 0.85rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '0.9rem', outline: 'none' }}
-                                    />
-                                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>seconds</span>
-                                </div>
-                                <p style={{ margin: '0.35rem 0 0', fontSize: '0.78rem', color: 'var(--text-secondary)', opacity: 0.7 }}>
-                                    ~{Math.floor(botDuration / 60)}m {botDuration % 60}s of recording
-                                </p>
                             </div>
                         </div>
 

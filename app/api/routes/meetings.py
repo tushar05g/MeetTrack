@@ -57,7 +57,7 @@ def parse_participants_csv(db: Session, meeting_id: int, participants_csv: Uploa
 @router.post("/bot/join")
 def join_live_meeting(
     meet_url: str = Form(...),
-    duration_seconds: int = Form(60),
+    
     scheduled_time: str = Form(None),
     bot_email: str = Form(None),
     bot_password: str = Form(None),
@@ -78,7 +78,7 @@ def join_live_meeting(
         status=MeetingStatus.scheduled if parsed_time else MeetingStatus.pending,
         scheduled_time=parsed_time,
         meet_url=meet_url,
-        bot_duration=duration_seconds,
+        bot_duration=None,
         bot_email=bot_email,
         bot_password=bot_password,
         owner_id=current_user.id
@@ -93,7 +93,7 @@ def join_live_meeting(
     if parsed_time:
         return {"message": "Meeting scheduled successfully", "meeting_id": meeting.id, "scheduled": True}
     else:
-        celery_app.send_task("run_bot_and_process", args=[meeting.id, meet_url, duration_seconds])
+        celery_app.send_task("run_bot_and_process", args=[meeting.id, meet_url])
         return {"message": "Bot dispatched to meeting", "meeting_id": meeting.id, "scheduled": False}
 
 from pydantic import BaseModel
@@ -161,6 +161,20 @@ def bot_webhook(payload: BotWebhookPayload, db: Session = Depends(get_db)):
         meeting.audio_file_path = output_audio
         db.commit()
         
+        # Try to download speaker_events.json
+        try:
+            speaker_blob_url = payload.blobUrl.replace(".webm", "_speakers.json")
+            speaker_response = requests.get(speaker_blob_url, stream=True, timeout=10)
+            if speaker_response.status_code == 200:
+                output_speakers = os.path.join(UPLOAD_DIR, f"bot_meeting_{meeting.id}_speakers.json")
+                with open(output_speakers, 'wb') as f:
+                    for chunk in speaker_response.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+                print(f"[WEBHOOK] Downloaded speaker events to {output_speakers}")
+        except Exception as e:
+            print(f"[WEBHOOK] Could not download speaker events (optional): {e}")
+
         print(f"[WEBHOOK] Successfully downloaded to {output_audio}. Triggering processing...")
         celery_app.send_task("process_meeting", args=[meeting.id])
         
