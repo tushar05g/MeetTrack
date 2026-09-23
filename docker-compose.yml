@@ -21,7 +21,8 @@ services:
 
   api:
     build: .
-    command: ["api"]
+    entrypoint: []
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     env_file:
       - .env
     environment:
@@ -38,7 +39,8 @@ services:
 
   worker:
     build: .
-    command: ["worker"]
+    entrypoint: []
+    command: ["celery", "-A", "app.worker", "worker", "-B", "--loglevel=info", "--concurrency=1"]
     env_file:
       - .env
     environment:
