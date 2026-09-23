@@ -115,7 +115,7 @@ export default function Dashboard() {
                     <thead>
                         <tr>
                             <th>Title</th>
-                            <th>Date</th>
+                            <th>Date & Time</th>
                             <th>Status</th>
                             <th>Action</th>
                         </tr>
@@ -131,7 +131,10 @@ export default function Dashboard() {
                             <tr key={meeting.id}>
                                 <td style={{ fontWeight: 500 }}>{meeting.title}</td>
                                 <td style={{ color: 'var(--text-secondary)' }}>
-                                    {new Date(meeting.created_at).toLocaleDateString()}
+                                    <div>{new Date(meeting.created_at).toLocaleDateString()}</div>
+                                    <div style={{ fontSize: '0.85em', opacity: 0.8 }}>
+                                        {new Date(meeting.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                    </div>
                                 </td>
                                 <td>
                                     <span className={`badge badge-${meeting.status}`}>{meeting.status}</span>

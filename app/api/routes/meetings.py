@@ -3,7 +3,7 @@ import shutil
 from fastapi import APIRouter, Depends, File, UploadFile, Form, HTTPException
 from datetime import date, datetime
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import desc
+from sqlalchemy import desc, or_
 
 from app.database import SessionLocal
 from app.models import Meeting, MeetingStatus, Task, TaskStatus, Transcript, MeetingParticipant, User
@@ -228,7 +228,17 @@ async def upload_meeting(
 
 @router.get("")
 def list_meetings(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    meetings = db.query(Meeting).filter(Meeting.owner_id == current_user.id).order_by(desc(Meeting.created_at)).all()
+    meetings = (
+        db.query(Meeting)
+        .filter(
+            or_(
+                Meeting.owner_id == current_user.id,
+                Meeting.participants.any(MeetingParticipant.email == current_user.email)
+            )
+        )
+        .order_by(desc(Meeting.created_at))
+        .all()
+    )
     
     return [
         {
@@ -248,7 +258,13 @@ def get_meeting(meeting_id: int, db: Session = Depends(get_db), current_user: Us
             joinedload(Meeting.tasks).joinedload(Task.owner),
             joinedload(Meeting.tasks).joinedload(Task.participant),
         )
-        .filter(Meeting.id == meeting_id, Meeting.owner_id == current_user.id)
+        .filter(
+            Meeting.id == meeting_id, 
+            or_(
+                Meeting.owner_id == current_user.id,
+                Meeting.participants.any(MeetingParticipant.email == current_user.email)
+            )
+        )
         .first()
     )
     if not meeting:

@@ -7,6 +7,13 @@ import os
 from app.database import engine, Base
 import app.models
 
+from sqlalchemy import text
+
+# Ensure vector extension exists before creating tables
+with engine.connect() as conn:
+    conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+    conn.commit()
+
 # Create tables
 Base.metadata.create_all(bind=engine)
 

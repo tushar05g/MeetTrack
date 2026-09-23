@@ -29,6 +29,7 @@ wait_for_pulseaudio() {
 
 # Kill any existing PulseAudio processes
 pulseaudio --kill 2>/dev/null || true
+rm -rf "$XDG_RUNTIME_DIR/pulse" 2>/dev/null || true
 for _ in {1..10}; do
     if ! pgrep -x "pulseaudio" >/dev/null; then
         break
