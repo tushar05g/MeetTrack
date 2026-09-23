@@ -2,11 +2,12 @@ import os
 import json
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import RedirectResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from datetime import datetime
 from jose import jwt, JWTError
 
-from app.database import SessionLocal
+from app.database import get_db
 from app.models import Meeting, MeetingParticipant, MeetingStatus, User
 from app.core.dependencies import get_current_user, get_db
 from app.core.security import SECRET_KEY, ALGORITHM
@@ -17,14 +18,16 @@ from googleapiclient.discovery import build
 
 router = APIRouter(prefix="/calendar", tags=["calendar"])
 
+from app.core.config import settings
+
 SCOPES = ['https://www.googleapis.com/auth/calendar.events']
-BOT_EMAIL = os.getenv("BOT_EMAIL", "meettrack-bot@gmail.com")
+BOT_EMAIL = settings.BOT_EMAIL
 
 def get_client_config():
     return {
         "web": {
-            "client_id": os.getenv("GOOGLE_CLIENT_ID"),
-            "client_secret": os.getenv("GOOGLE_CLIENT_SECRET"),
+            "client_id": settings.GOOGLE_CLIENT_ID,
+            "client_secret": settings.GOOGLE_CLIENT_SECRET,
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
             "token_uri": "https://oauth2.googleapis.com/token",
             "redirect_uris": ["http://localhost:8000/calendar/callback"]
@@ -66,8 +69,8 @@ def invite_bot_to_event(service, event_id: str):
         return False
 
 @router.get("/auth")
-def auth_google_calendar(token: str = Query(...), redirect_to: str = Query("http://localhost:5173"), db: Session = Depends(get_db)):
-    if not os.getenv("GOOGLE_CLIENT_ID"):
+async def auth_google_calendar(token: str = Query(...), redirect_to: str = Query("http://localhost:5173"), db: AsyncSession = Depends(get_db)):
+    if not settings.GOOGLE_CLIENT_ID:
         return {"status": "missing_credentials", "message": "GOOGLE_CLIENT_ID not set"}
 
     try:
@@ -78,7 +81,8 @@ def auth_google_calendar(token: str = Query(...), redirect_to: str = Query("http
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
         
-    user = db.query(User).filter(User.email == email).first()
+    result = await db.execute(select(User).filter(User.email == email))
+    user = result.scalars().first()
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
 
@@ -90,10 +94,10 @@ def auth_google_calendar(token: str = Query(...), redirect_to: str = Query("http
     state_data = {"user_id": user.id, "redirect_to": redirect_to}
     state_str = base64.b64encode(json.dumps(state_data).encode()).decode()
 
-    redirect_uri = os.getenv("GOOGLE_REDIRECT_URI") or f"{redirect_to.rstrip('/')}/api/calendar/callback"
+    redirect_uri = settings.GOOGLE_REDIRECT_URI or f"{redirect_to.rstrip('/')}/api/calendar/callback"
 
     params = {
-        "client_id": os.getenv("GOOGLE_CLIENT_ID"),
+        "client_id": settings.GOOGLE_CLIENT_ID,
         "redirect_uri": redirect_uri,
         "response_type": "code",
         "scope": " ".join(SCOPES),
@@ -105,23 +109,24 @@ def auth_google_calendar(token: str = Query(...), redirect_to: str = Query("http
     return RedirectResponse(url=auth_url)
 
 @router.get("/callback")
-def calendar_callback(code: str, state: str, db: Session = Depends(get_db)):
+async def calendar_callback(code: str, state: str, db: AsyncSession = Depends(get_db)):
     try:
         import base64
         state_data = json.loads(base64.b64decode(state.encode()).decode())
         user_id = int(state_data["user_id"])
         frontend_url = state_data.get("redirect_to", "http://localhost:5173")
         
-        user = db.query(User).filter(User.id == user_id).first()
+        result = await db.execute(select(User).filter(User.id == user_id))
+        user = result.scalars().first()
         if not user:
             return {"status": "error", "message": "User not found from OAuth state"}
             
         import requests
         data = {
             "code": code,
-            "client_id": os.getenv("GOOGLE_CLIENT_ID"),
-            "client_secret": os.getenv("GOOGLE_CLIENT_SECRET"),
-            "redirect_uri": os.getenv("GOOGLE_REDIRECT_URI") or f"{frontend_url.rstrip('/')}/api/calendar/callback",
+            "client_id": settings.GOOGLE_CLIENT_ID,
+            "client_secret": settings.GOOGLE_CLIENT_SECRET,
+            "redirect_uri": settings.GOOGLE_REDIRECT_URI or f"{frontend_url.rstrip('/')}/api/calendar/callback",
             "grant_type": "authorization_code"
         }
         resp = requests.post("https://oauth2.googleapis.com/token", data=data)
@@ -134,25 +139,25 @@ def calendar_callback(code: str, state: str, db: Session = Depends(get_db)):
             "token": token_data.get("access_token"),
             "refresh_token": token_data.get("refresh_token"),
             "token_uri": "https://oauth2.googleapis.com/token",
-            "client_id": os.getenv("GOOGLE_CLIENT_ID"),
-            "client_secret": os.getenv("GOOGLE_CLIENT_SECRET"),
+            "client_id": settings.GOOGLE_CLIENT_ID,
+            "client_secret": settings.GOOGLE_CLIENT_SECRET,
             "scopes": SCOPES
         }
         
         user.google_calendar_token = creds_json
-        db.commit()
+        await db.commit()
             
         return RedirectResponse(url=f"{frontend_url}/upload?calendar=connected")
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
 @router.get("/status")
-def calendar_status(current_user: User = Depends(get_current_user)):
+async def calendar_status(current_user: User = Depends(get_current_user)):
     """Check if Google Calendar is connected for the current user."""
     return {"connected": current_user.google_calendar_token is not None, "bot_email": BOT_EMAIL}
 
 @router.get("/fetch_upcoming")
-def fetch_upcoming_meeting(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def fetch_upcoming_meeting(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     service = get_calendar_service(current_user)
     if not service:
         return {"status": "missing_credentials", "bot_email": BOT_EMAIL, "instructions": "Please click 'Connect Google Calendar' first to log in."}
@@ -196,8 +201,8 @@ def fetch_upcoming_meeting(db: Session = Depends(get_db), current_user: User = D
             owner_id=current_user.id
         )
         db.add(meeting)
-        db.commit()
-        db.refresh(meeting)
+        await db.commit()
+        await db.refresh(meeting)
         
         saved_attendees = []
         for attendee in attendees:
@@ -207,7 +212,7 @@ def fetch_upcoming_meeting(db: Session = Depends(get_db), current_user: User = D
                 mp = MeetingParticipant(meeting_id=meeting.id, name=name, email=email)
                 db.add(mp)
                 saved_attendees.append({"name": name, "email": email})
-        db.commit()
+        await db.commit()
         
         return {
             "status": "ok",

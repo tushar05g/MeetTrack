@@ -9,23 +9,20 @@ import app.models
 
 from sqlalchemy import text
 
-# Ensure vector extension exists before creating tables
-with engine.connect() as conn:
-    conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-    conn.commit()
-
-# Create tables
-Base.metadata.create_all(bind=engine)
+# Vector extension should be created via an Alembic migration in production.
+# Tables are now managed by Alembic exclusively.
 
 app = FastAPI(title="MeetTrack API")
 
 # Ensure upload directory exists on startup
 os.makedirs(os.path.join(os.path.dirname(__file__), "uploads"), exist_ok=True)
 
+from app.core.config import settings
+
 # Setup CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=settings.CORS_ORIGINS,
     allow_origin_regex=r"https://.*\.ngrok.*",
     allow_credentials=True,
     allow_methods=["*"],

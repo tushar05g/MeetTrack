@@ -5,6 +5,8 @@ import time
 import json
 from app.services.verify_speakers import verify_transcript_speakers_with_llm
 
+from app.core.config import settings
+
 ASSEMBLYAI_API_URL = "https://api.assemblyai.com/v2"
 
 def transcribe_audio(audio_path, model_size="default", compute_type="default"):
@@ -13,7 +15,7 @@ def transcribe_audio(audio_path, model_size="default", compute_type="default"):
     Uses DOM speaker events to map generic labels (A, B, C) to real names,
     then passes the result through an LLM for final verification and segment splitting.
     """
-    api_key = os.getenv("ASSEMBLYAI_API_KEY")
+    api_key = settings.ASSEMBLYAI_API_KEY
     if not api_key:
         raise ValueError("ASSEMBLYAI_API_KEY environment variable is missing")
 

@@ -2,10 +2,11 @@ import os
 import shutil
 from fastapi import APIRouter, Depends, File, UploadFile, Form, HTTPException
 from datetime import date, datetime
-from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import desc, or_
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, desc, or_
+from sqlalchemy.orm import joinedload
 
-from app.database import SessionLocal
+from app.database import get_db
 from app.models import Meeting, MeetingStatus, Task, TaskStatus, Transcript, MeetingParticipant, User
 from app.core.dependencies import get_current_user
 import csv
@@ -13,26 +14,22 @@ import io
 from pydantic import BaseModel
 from celery import Celery
 
+from app.core.config import settings
+
 celery_app = Celery(
     "meettrack",
-    broker=os.getenv("CELERY_BROKER_URL", "redis://redis:6379/0"),
-    backend=os.getenv("CELERY_RESULT_BACKEND", "redis://redis:6379/0")
+    broker=settings.CELERY_BROKER_URL,
+    backend=settings.CELERY_RESULT_BACKEND
 )
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
 
-# Dependency to get DB session
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# get_db is imported from app.database
 
 # Fixed: point to app/uploads/ relative to the project root
-UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "app", "uploads")
 
-def parse_participants_csv(db: Session, meeting_id: int, participants_csv: UploadFile):
+
+async def parse_participants_csv(db: AsyncSession, meeting_id: int, participants_csv: UploadFile):
     if not participants_csv:
         return
     try:
@@ -50,19 +47,19 @@ def parse_participants_csv(db: Session, meeting_id: int, participants_csv: Uploa
                 if name and email:
                     mp = MeetingParticipant(meeting_id=meeting_id, name=name, email=email)
                     db.add(mp)
-            db.commit()
+            await db.commit()
     except Exception as e:
         print(f"Failed to parse CSV: {e}")
 
 @router.post("/bot/join")
-def join_live_meeting(
+async def join_live_meeting(
     meet_url: str = Form(...),
     
     scheduled_time: str = Form(None),
     bot_email: str = Form(None),
     bot_password: str = Form(None),
     participants_csv: UploadFile = File(None),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     if not meet_url:
@@ -84,11 +81,11 @@ def join_live_meeting(
         owner_id=current_user.id
     )
     db.add(meeting)
-    db.commit()
-    db.refresh(meeting)
+    await db.commit()
+    await db.refresh(meeting)
 
     # Process CSV if provided
-    parse_participants_csv(db, meeting.id, participants_csv)
+    await parse_participants_csv(db, meeting.id, participants_csv)
     
     if parsed_time:
         return {"message": "Meeting scheduled successfully", "meeting_id": meeting.id, "scheduled": True}
@@ -108,7 +105,7 @@ class BotWebhookPayload(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
 
 @router.post("/bot/webhook")
-def bot_webhook(payload: BotWebhookPayload, db: Session = Depends(get_db)):
+async def bot_webhook(payload: BotWebhookPayload, db: AsyncSession = Depends(get_db)):
     """
     Webhook called by screenappai/meeting-bot when it finishes recording.
     """
@@ -132,7 +129,8 @@ def bot_webhook(payload: BotWebhookPayload, db: Session = Depends(get_db)):
         print(f"[WEBHOOK] Invalid botId/recordingId format: {bot_id}")
         raise HTTPException(status_code=400, detail="Invalid botId/recordingId")
 
-    meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
+    result = await db.execute(select(Meeting).filter(Meeting.id == meeting_id))
+    meeting = result.scalars().first()
     if not meeting:
         print(f"[WEBHOOK] Meeting not found: {meeting_id}")
         raise HTTPException(status_code=404, detail="Meeting not found")
@@ -140,42 +138,36 @@ def bot_webhook(payload: BotWebhookPayload, db: Session = Depends(get_db)):
     if not payload.blobUrl:
         print(f"[WEBHOOK] No blobUrl provided for meeting {meeting_id}")
         meeting.status = MeetingStatus.failed
-        db.commit()
+        await db.commit()
         raise HTTPException(status_code=400, detail="No blobUrl provided")
 
     print(f"[WEBHOOK] Downloading recording from {payload.blobUrl} for meeting {meeting_id}...")
     import requests
     try:
-        # Download the file to the meeting's designated audio_file_path
-        output_audio = os.path.join(UPLOAD_DIR, f"bot_meeting_{meeting.id}.webm")
-        os.makedirs(UPLOAD_DIR, exist_ok=True)
+        # Upload directly to Minio
+        object_name = f"meetings/bot_meeting_{meeting.id}.webm"
         
         response = requests.get(payload.blobUrl, stream=True, timeout=60)
         response.raise_for_status()
         
-        with open(output_audio, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
+        from app.core.storage import upload_fileobj_to_s3
+        s3_uri = upload_fileobj_to_s3(response.raw, object_name)
                     
-        meeting.audio_file_path = output_audio
-        db.commit()
+        meeting.audio_file_path = s3_uri
+        await db.commit()
         
-        # Try to download speaker_events.json
+        # Try to download speaker_events.json and upload to Minio
         try:
             speaker_blob_url = payload.blobUrl.replace(".webm", "_speakers.json")
             speaker_response = requests.get(speaker_blob_url, stream=True, timeout=10)
             if speaker_response.status_code == 200:
-                output_speakers = os.path.join(UPLOAD_DIR, f"bot_meeting_{meeting.id}_speakers.json")
-                with open(output_speakers, 'wb') as f:
-                    for chunk in speaker_response.iter_content(chunk_size=8192):
-                        if chunk:
-                            f.write(chunk)
-                print(f"[WEBHOOK] Downloaded speaker events to {output_speakers}")
+                speaker_object_name = f"meetings/bot_meeting_{meeting.id}_speakers.json"
+                upload_fileobj_to_s3(speaker_response.raw, speaker_object_name)
+                print(f"[WEBHOOK] Downloaded speaker events to {speaker_object_name}")
         except Exception as e:
             print(f"[WEBHOOK] Could not download speaker events (optional): {e}")
 
-        print(f"[WEBHOOK] Successfully downloaded to {output_audio}. Triggering processing...")
+        print(f"[WEBHOOK] Successfully uploaded to {s3_uri}. Triggering processing...")
         celery_app.send_task("process_meeting", args=[meeting.id])
         
         return {"status": "success", "message": "File downloaded and processing triggered."}
@@ -183,7 +175,7 @@ def bot_webhook(payload: BotWebhookPayload, db: Session = Depends(get_db)):
     except Exception as e:
         print(f"[WEBHOOK] Failed to download file or trigger processing: {e}")
         meeting.status = MeetingStatus.failed
-        db.commit()
+        await db.commit()
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.post("/upload")
@@ -191,35 +183,32 @@ async def upload_meeting(
     file: UploadFile = File(...), 
     recorded_date: date = Form(default_factory=date.today),
     participants_csv: UploadFile = File(None),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file uploaded")
     
-    # Generate unique filename using original filename safely
-    file_path = os.path.join(UPLOAD_DIR, file.filename)
-    
-    # Ensure upload directory exists
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
-    
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    # Upload to Minio
+    import time
+    object_name = f"meetings/{int(time.time())}_{file.filename}"
+    from app.core.storage import upload_fileobj_to_s3
+    s3_uri = upload_fileobj_to_s3(file.file, object_name)
         
     # Create meeting record in DB
     meeting = Meeting(
         title=file.filename,
-        audio_file_path=file_path,
+        audio_file_path=s3_uri,
         recorded_date=recorded_date,
         status=MeetingStatus.pending,
         owner_id=current_user.id
     )
     db.add(meeting)
-    db.commit()
-    db.refresh(meeting)
+    await db.commit()
+    await db.refresh(meeting)
     
     # Parse CSV if uploaded
-    parse_participants_csv(db, meeting.id, participants_csv)
+    await parse_participants_csv(db, meeting.id, participants_csv)
     
     # Trigger Celery background task
     celery_app.send_task("process_meeting", args=[meeting.id])
@@ -227,9 +216,9 @@ async def upload_meeting(
     return {"message": "Meeting uploaded successfully", "meeting_id": meeting.id}
 
 @router.get("")
-def list_meetings(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    meetings = (
-        db.query(Meeting)
+async def list_meetings(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    result = await db.execute(
+        select(Meeting)
         .filter(
             or_(
                 Meeting.owner_id == current_user.id,
@@ -237,8 +226,8 @@ def list_meetings(db: Session = Depends(get_db), current_user: User = Depends(ge
             )
         )
         .order_by(desc(Meeting.created_at))
-        .all()
     )
+    meetings = result.scalars().all()
     
     return [
         {
@@ -250,9 +239,9 @@ def list_meetings(db: Session = Depends(get_db), current_user: User = Depends(ge
     ]
 
 @router.get("/{meeting_id}")
-def get_meeting(meeting_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    meeting = (
-        db.query(Meeting)
+async def get_meeting(meeting_id: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    result = await db.execute(
+        select(Meeting)
         .options(
             joinedload(Meeting.transcript),
             joinedload(Meeting.tasks).joinedload(Task.owner),
@@ -265,8 +254,8 @@ def get_meeting(meeting_id: int, db: Session = Depends(get_db), current_user: Us
                 Meeting.participants.any(MeetingParticipant.email == current_user.email)
             )
         )
-        .first()
     )
+    meeting = result.scalars().first()
     if not meeting:
         raise HTTPException(status_code=404, detail="Meeting not found")
 
@@ -303,8 +292,9 @@ class MapSpeakerRequest(BaseModel):
     real_name: str
 
 @router.post("/{meeting_id}/map_speaker")
-def map_speaker(meeting_id: int, request: MapSpeakerRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    meeting = db.query(Meeting).filter(Meeting.id == meeting_id, Meeting.owner_id == current_user.id).first()
+async def map_speaker(meeting_id: int, request: MapSpeakerRequest, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    result = await db.execute(select(Meeting).filter(Meeting.id == meeting_id, Meeting.owner_id == current_user.id))
+    meeting = result.scalars().first()
     if not meeting:
         raise HTTPException(status_code=404, detail="Meeting not found")
     

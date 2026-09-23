@@ -2,11 +2,12 @@ from datetime import datetime, timedelta
 import bcrypt
 from jose import jwt
 import os
+from app.core.config import settings
 
 # Secret key for JWT. In production, this should be in .env!
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "super-secret-key-for-dev-only")
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
+SECRET_KEY = settings.SECRET_KEY
+ALGORITHM = settings.ALGORITHM
+ACCESS_TOKEN_EXPIRE_MINUTES = settings.ACCESS_TOKEN_EXPIRE_MINUTES
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     try:

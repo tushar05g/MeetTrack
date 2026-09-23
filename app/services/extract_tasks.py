@@ -1,12 +1,9 @@
 import json
 import requests
-import os
-from dotenv import load_dotenv
+from app.core.config import settings
 
-load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.env'))
-
-GROQ_API_URL = os.getenv("GROQ_API_URL", "https://api.groq.com/openai/v1/chat/completions")
-MODEL_NAME = os.getenv("GROQ_MODEL_NAME", "llama-3.1-70b-versatile")
+GROQ_API_URL = settings.GROQ_API_URL
+MODEL_NAME = settings.GROQ_MODEL_NAME
 
 def format_transcript(segments):
     """
@@ -81,7 +78,7 @@ def extract_tasks_from_transcript(segments, meeting_date, users_list, calendar_m
     }
     
     headers = {
-        "Authorization": f"Bearer {os.getenv('GROQ_API_KEY')}",
+        "Authorization": f"Bearer {settings.GROQ_API_KEY}",
         "Content-Type": "application/json"
     }
     

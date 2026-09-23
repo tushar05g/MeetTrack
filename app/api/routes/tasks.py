@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from sqlalchemy.orm import joinedload
 from pydantic import BaseModel
 
 from app.database import SessionLocal
@@ -8,19 +10,15 @@ from app.core.dependencies import get_current_user
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+from app.database import get_db
 
 class TaskUpdateStatus(BaseModel):
     status: TaskStatus
 
 @router.get("")
-def list_tasks(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    tasks = db.query(Task).join(Meeting).filter(Meeting.owner_id == current_user.id).all()
+async def list_tasks(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    result = await db.execute(select(Task).join(Meeting).filter(Meeting.owner_id == current_user.id).options(joinedload(Task.owner)))
+    tasks = result.scalars().all()
     return [
         {
             "id": t.id,
@@ -33,11 +31,12 @@ def list_tasks(db: Session = Depends(get_db), current_user: User = Depends(get_c
     ]
 
 @router.patch("/{task_id}")
-def update_task_status(task_id: int, update: TaskUpdateStatus, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    task = db.query(Task).join(Meeting).filter(Task.id == task_id, Meeting.owner_id == current_user.id).first()
+async def update_task_status(task_id: int, update: TaskUpdateStatus, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    result = await db.execute(select(Task).join(Meeting).filter(Task.id == task_id, Meeting.owner_id == current_user.id))
+    task = result.scalars().first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     
     task.status = update.status
-    db.commit()
+    await db.commit()
     return {"status": "success", "task_id": task_id, "new_status": task.status.value}

@@ -130,3 +130,6 @@ python-multipart
 email-validator
 pydub==0.25.1
 bcrypt
+asyncpg
+pydantic-settings
+boto3

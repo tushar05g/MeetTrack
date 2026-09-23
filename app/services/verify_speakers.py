@@ -1,13 +1,10 @@
 import json
 import requests
-import os
-from dotenv import load_dotenv
+from app.core.config import settings
 
-load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.env'))
-
-GROQ_API_URL = os.getenv("GROQ_API_URL", "https://api.groq.com/openai/v1/chat/completions")
+GROQ_API_URL = settings.GROQ_API_URL
 # Upgraded to llama-3.3-70b-versatile for better structured output and reasoning
-MODEL_NAME = os.getenv("GROQ_MODEL_NAME", "llama-3.3-70b-versatile")
+MODEL_NAME = settings.GROQ_MODEL_NAME
 
 # Process transcript in chunks to avoid token limit issues on long meetings
 CHUNK_SIZE = 30       # Segments per chunk
@@ -87,7 +84,7 @@ Output: {{"reasoning": "Kashish introduces herself, Tushar thanks her, Kashish r
     }
 
     headers = {
-        "Authorization": f"Bearer {os.getenv('GROQ_API_KEY')}",
+        "Authorization": f"Bearer {settings.GROQ_API_KEY}",
         "Content-Type": "application/json"
     }
 

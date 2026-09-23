@@ -11,13 +11,13 @@ import Signup from './pages/Signup';
 import { AuthProvider, AuthContext } from './context/AuthContext';
 
 function ProtectedRoute({ children }) {
-  const { token, loading } = useContext(AuthContext);
+  const { user, loading } = useContext(AuthContext);
   
   if (loading) {
     return <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Loading...</div>;
   }
   
-  if (!token) {
+  if (!user) {
     return <Navigate to="/login" replace />;
   }
   
@@ -25,9 +25,9 @@ function ProtectedRoute({ children }) {
 }
 
 function AppLayout({ children }) {
-  const { token } = useContext(AuthContext);
+  const { user } = useContext(AuthContext);
   
-  if (!token) {
+  if (!user) {
     return children;
   }
   

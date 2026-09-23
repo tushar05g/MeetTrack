@@ -1,9 +1,9 @@
-from app.database import SessionLocal
+from app.database import SyncSessionLocal
 from app.models import User, Meeting, Task, MeetingStatus, TaskStatus
 from datetime import datetime
 
 def seed():
-    db = SessionLocal()
+    db = SyncSessionLocal()
     
     # Check if user exists
     user = db.query(User).filter(User.email == "test@example.com").first()

@@ -59,9 +59,9 @@ def _transcribe_chunk(audio_bytes: bytes, speaker_name: str) -> str | None:
     """
     Synchronous function: saves audio bytes to a temp WAV, sends to Groq Whisper,
     returns the transcribed text (or None on failure).
-    Designed to be run in a thread pool executor.
     """
-    api_key = os.getenv("GROQ_API_KEY")
+    from app.core.config import settings
+    api_key = settings.GROQ_API_KEY
     if not api_key:
         return None
 
@@ -128,9 +128,9 @@ async def process_audio_stream(bot_websocket, meeting_id: str):
     """
     Receives raw s16le audio chunks from the bot WebSocket.
     Buffers into 5-second windows and sends to Groq Whisper for transcription.
-    Broadcasts results to all connected frontend WebSockets.
     """
-    api_key = os.getenv("GROQ_API_KEY")
+    from app.core.config import settings
+    api_key = settings.GROQ_API_KEY
     if not api_key:
         logger.error("[Groq Whisper] GROQ_API_KEY is not set. Live transcription disabled.")
         # Drain the socket gracefully without crashing

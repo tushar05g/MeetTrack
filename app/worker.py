@@ -7,20 +7,19 @@ from datetime import datetime, date, timedelta
 from celery import Celery
 from celery.schedules import crontab
 
-from app.database import SessionLocal
+from app.database import SyncSessionLocal
 from app.models import Meeting, MeetingStatus, Transcript, Task, TaskStatus, TaskFollowup, FollowupType, User
 from app.email_utils import send_email
 
 # Import Phase 1 AI pipeline components
-from app.services.transcribe import transcribe_audio
-from app.services.diarize import diarize_audio
-from app.services.extract_tasks import extract_tasks_from_transcript
 from app.services.rag import extract_text_embedding, find_relevant_transcripts
+
+from app.core.config import settings
 
 celery_app = Celery(
     "meettrack",
-    broker=os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0"),
-    backend=os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
+    broker=settings.CELERY_BROKER_URL,
+    backend=settings.CELERY_RESULT_BACKEND
 )
 
 # Configure Celery Beat to run everyday at 9:00 AM
@@ -43,7 +42,7 @@ MOCK_USER_MAPPING = {
 
 @celery_app.task(name="run_bot_and_process")
 def run_bot_and_process(meeting_id: int, meet_url: str):
-    db = SessionLocal()
+    db = SyncSessionLocal()
     try:
         meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
         if not meeting:
@@ -89,7 +88,7 @@ def run_bot_and_process(meeting_id: int, meet_url: str):
 
 @celery_app.task(name="process_meeting", bind=True)
 def process_meeting(self, meeting_id: int):
-    db = SessionLocal()
+    db = SyncSessionLocal()
     try:
         meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
         if not meeting:
@@ -100,82 +99,67 @@ def process_meeting(self, meeting_id: int):
         meeting.status = MeetingStatus.processing
         db.commit()
 
-        # Step 1: Transcribe (Always run Whisper to get multilingual raw text)
-        print("[STEP 1] Transcribing audio...")
-        raw_segments = transcribe_audio(meeting.audio_file_path)
+        # Step 1: Transcribe and Diarize (AssemblyAI)
+        print("[STEP 1] Transcribing and Diarizing audio using AssemblyAI...")
+        
+        # Load CC data if this was a bot meeting to find expected speakers
+        from app.core.storage import get_file_content_from_s3
+        dom_events = []
+        bot_participants = None
+        speakers_expected = None
+        
+        try:
+            # Check if this is an S3 URI or local path
+            if meeting.audio_file_path.startswith("s3://"):
+                speaker_key = meeting.audio_file_path.replace(f"s3://{settings.S3_BUCKET_NAME}/", "").replace(".webm", "_speakers.json")
+                try:
+                    json_bytes = get_file_content_from_s3(speaker_key)
+                    dom_events = json.loads(json_bytes.decode('utf-8'))
+                except Exception as s3_err:
+                    print(f"Speaker JSON not found in S3 for {speaker_key}: {s3_err}")
+            else:
+                # Fallback for old local files
+                output_json = os.path.join(os.path.dirname(os.path.dirname(__file__)), "app", "uploads", f"bot_meeting_{meeting.id}_speakers.json")
+                if os.path.exists(output_json):
+                    with open(output_json, "r") as f:
+                        dom_events = json.load(f)
+            
+            if dom_events:
+                unique_dom_names = list(set(ev["name"] for ev in dom_events))
+                if len(unique_dom_names) >= 2:
+                    speakers_expected = len(unique_dom_names)
+                bot_participants = ", ".join(unique_dom_names)
+        except Exception as e:
+            print(f"Error loading bot speakers JSON: {e}")
 
-        if not raw_segments:
-            print("[STEP 1] No speech detected in audio (silent meeting). Marking as done.")
+        from app.services.providers import AssemblyAITranscriber, GroqLLMProvider
+        transcriber = AssemblyAITranscriber()
+        llm = GroqLLMProvider()
+
+        try:
+            diarized_segments = transcriber.transcribe_audio(meeting.audio_file_path, speakers_expected=speakers_expected)
+        except Exception as e:
+            print(f"[STEP 1] Transcription failed: {e}")
+            traceback.print_exc()
+            diarized_segments = []
+
+        if not diarized_segments:
+            print("[STEP 1] No speech detected in audio (silent meeting) or error. Marking as done.")
             transcript = Transcript(meeting_id=meeting.id, full_text="[No speech detected]", segments=[])
             db.add(transcript)
             meeting.status = MeetingStatus.done
             db.commit()
             return
-
-        # Load CC data if this was a bot meeting
-        output_json = os.path.join(os.path.dirname(os.path.dirname(__file__)), "app", "uploads", f"bot_meeting_{meeting.id}.json")
-        bot_transcript_data = None
-        bot_participants = None
+            
+        # Step 2: Tri-Factor Name Mapping & LLM Verification
+        print("[STEP 2] Mapping DOM speakers and verifying with LLM...")
         
-        if os.path.exists(output_json):
-            try:
-                with open(output_json, "r") as f:
-                    data = json.load(f)
-                    if data and isinstance(data, list) and isinstance(data[0], dict):
-                        bot_transcript_data = data
-                        bot_participants = ", ".join(list(set(d.get('speaker', 'Unknown') for d in data)))
-            except Exception as e:
-                print(f"Error loading bot JSON: {e}")
-
-        # Step 2: Diarize (ALWAYS run Pyannote to group voices)
-        print("[STEP 2] Diarizing audio using Pyannote...")
-        try:
-            diarized_segments = diarize_audio(meeting.audio_file_path, raw_segments)
-        except Exception as diarize_err:
-            print(f"[STEP 2] Diarization failed ({diarize_err}), falling back to raw transcription without speaker labels.")
-            traceback.print_exc()
-            diarized_segments = [
-                {**seg, "speaker": seg.get("speaker", "SPEAKER_00")}
-                for seg in raw_segments
-            ]
-
-        # Step 3: Tri-Factor Name Mapping
-        if bot_transcript_data:
-            print("[STEP 3] Live CC transcript found! Mapping Pyannote acoustic labels to CC names via time-overlap voting...")
+        if dom_events:
+            from app.services.transcribe import _map_dom_speakers_to_segments
+            diarized_segments = _map_dom_speakers_to_segments(diarized_segments, dom_events)
             
-            speaker_votes = {}
-            
-            # Vote: Match Pyannote segments to CC segments
-            for d_seg in diarized_segments:
-                py_speaker = d_seg.get('speaker', 'SPEAKER_00')
-                d_start = d_seg.get('start', 0)
-                d_end = d_seg.get('end', 0)
-                
-                for c_seg in bot_transcript_data:
-                    c_start = c_seg.get('start', 0)
-                    c_end = c_seg.get('end', 0)
-                    
-                    overlap = max(0, min(d_end, c_end) - max(d_start, c_start))
-                    if overlap > 0.5: # Require at least 0.5s overlap for a vote
-                        cc_speaker = c_seg.get('speaker', 'Unknown')
-                        if py_speaker not in speaker_votes:
-                            speaker_votes[py_speaker] = {}
-                        speaker_votes[py_speaker][cc_speaker] = speaker_votes[py_speaker].get(cc_speaker, 0) + overlap
-            
-            # Resolve votes
-            final_mapping = {}
-            for py_spk, votes in speaker_votes.items():
-                if votes:
-                    # Pick the CC name that had the most overlap time with this Pyannote label
-                    best_cc_spk = max(votes, key=votes.get)
-                    final_mapping[py_spk] = best_cc_spk
-                    print(f"Mapped {py_spk} -> {best_cc_spk}")
-            
-            # Apply mapping to ALL segments
-            for d_seg in diarized_segments:
-                py_speaker = d_seg.get('speaker', 'SPEAKER_00')
-                if py_speaker in final_mapping:
-                    d_seg['speaker'] = final_mapping[py_speaker]
+        unique_dom_names = list(set(ev["name"] for ev in dom_events)) if dom_events else []
+        diarized_segments = llm.verify_speakers(diarized_segments, unique_dom_names)
 
         # Normalize segments — guard against missing keys
         full_text = "\n".join([
@@ -243,7 +227,7 @@ def process_meeting(self, meeting_id: int):
         calendar_map_str = "\n".join(calendar_map)
         
         try:
-            llm_result = extract_tasks_from_transcript(diarized_segments, meeting_date_str, users_list, calendar_map_str, rag_context)
+            llm_result = llm.extract_tasks(diarized_segments, meeting_date_str, users_list, calendar_map_str, rag_context)
             if isinstance(llm_result, dict):
                 parsed_tasks = llm_result.get("tasks", [])
             else:
@@ -352,7 +336,7 @@ def process_meeting(self, meeting_id: int):
 
 @celery_app.task(name="check_overdue_tasks")
 def check_overdue_tasks():
-    db = SessionLocal()
+    db = SyncSessionLocal()
     try:
         print("--- Running Scheduled Task: Check Overdue Tasks ---")
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -394,7 +378,7 @@ def check_overdue_tasks():
 
 @celery_app.task(name="check_scheduled_meetings")
 def check_scheduled_meetings():
-    db = SessionLocal()
+    db = SyncSessionLocal()
     try:
         now = datetime.utcnow()
         # Look for meetings scheduled within the next 2 minutes
@@ -423,5 +407,15 @@ def check_scheduled_meetings():
 @celery_app.task(name="process_voice_profile")
 def process_voice_profile(user_id: int, file_path: str):
     print("Voice biometrics are temporarily disabled in Path B (Groq API).")
-    if os.path.exists(file_path):
+    if file_path.startswith("s3://"):
+        from app.core.storage import get_s3_client
+        from app.core.config import settings
+        try:
+            client = get_s3_client()
+            key = file_path.replace(f"s3://{settings.S3_BUCKET_NAME}/", "")
+            client.delete_object(Bucket=settings.S3_BUCKET_NAME, Key=key)
+            print(f"Deleted S3 object: {key}")
+        except Exception as e:
+            print(f"Failed to delete S3 object: {e}")
+    elif os.path.exists(file_path):
         os.remove(file_path)
