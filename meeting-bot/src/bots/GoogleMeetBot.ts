@@ -695,7 +695,7 @@ export class GoogleMeetBot extends MeetBotBase {
       async ({ teamId, duration, inactivityLimit, loneParticipantExitDelayMs, userId, slightlySecretId, activateInactivityDetectionAfter, activateInactivityDetectionAfterMinutes, mimeTypes }:
       { teamId:string, userId: string, duration: number, inactivityLimit: number, loneParticipantExitDelayMs: number, slightlySecretId: string, activateInactivityDetectionAfter: string, activateInactivityDetectionAfterMinutes: number, mimeTypes: string[] }) => {
         let timeoutId: NodeJS.Timeout;
-        let inactivitySilenceDetectionTimeout: NodeJS.Timeout;
+        let inactivitySilenceDetectionTimeout: NodeJS.Timeout | undefined = undefined;
         let isOnValidGoogleMeetPageInterval: NodeJS.Timeout;
 
         const sendChunkToServer = async (chunk: ArrayBuffer) => {

@@ -1,6 +1,7 @@
 import os
 import requests
 import time
+from app.services.verify_speakers import verify_transcript_speakers_with_llm
 
 ASSEMBLYAI_API_URL = "https://api.assemblyai.com/v2"
 
@@ -147,6 +148,14 @@ def transcribe_audio(audio_path, model_size="default", compute_type="default"):
                         seg["speaker"] = final_mapping[assembly_spk]
         except Exception as e:
             print(f"Failed to merge DOM speaker events: {e}")
+            
+    # LLM Verification Step
+    dom_speaker_names = []
+    if 'dom_events' in locals() and dom_events:
+        dom_speaker_names = list(set(ev["name"] for ev in dom_events))
+    
+    print("Verifying speaker assignments with LLM...")
+    all_segments = verify_transcript_speakers_with_llm(all_segments, dom_speakers=dom_speaker_names)
             
     return all_segments
 
