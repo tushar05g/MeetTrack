@@ -55,14 +55,14 @@ Here is the diarized meeting transcript to correct:
 ---
 
 CRITICAL INSTRUCTIONS:
-1. The transcript may be in English, Hindi, or a mix of both (Hinglish). Handle all languages.
+1. The transcript may be in English, Hindi, or a mix of both (Hinglish). If you detect any Hindi or non-English text, you MUST TRANSLATE it into clear, natural English. The final output text in the JSON MUST be 100% English.
 2. SPLIT SEGMENTS IF NECESSARY: If a segment contains dialogue from multiple speakers (e.g., a question followed by an answer from someone else), you MUST split it into separate segments with correct speaker labels.
 3. When splitting, use proportional time estimates based on text length within the original segment's start/end bounds.
-4. When splitting, default to retaining the original speaker for continuous speech. Only change the speaker when the text clearly represents a RESPONSE or TURN from someone else (e.g., "Yes", "Okay", "Haan", answering a direct question).
+4. When splitting, default to retaining the original speaker for continuous speech. Only change the speaker when the text clearly represents a RESPONSE or TURN from someone else (e.g., "Yes", "Okay", answering a direct question).
 5. Replace any "Unknown Speaker (X)" labels with the real participant name from the KNOWN PARTICIPANTS list, using conversational context clues.
 6. Correct generic A/B/C labels with real names from the KNOWN PARTICIPANTS list where you can confidently infer them.
 7. Return a JSON object with two keys:
-   - "reasoning": a brief string explaining any splits or label changes you made
+   - "reasoning": a brief string explaining any splits, label changes, or translations you made
    - "segments": the corrected array of segments
 
 Each segment MUST have: "start" (float), "end" (float), "speaker" (string), "text" (string).
@@ -73,9 +73,9 @@ Example (English):
 Input:  [0.0s - 10.0s] Unknown Speaker (A): Am I audible? Yes you are. Okay.
 Output: {{"reasoning": "A asks a question, B answers, A acknowledges. Split into 3 segments.", "segments": [{{"start": 0.0, "end": 5.0, "speaker": "Tushar", "text": "Am I audible?"}}, {{"start": 5.0, "end": 8.0, "speaker": "Kashish", "text": "Yes you are."}}, {{"start": 8.0, "end": 10.0, "speaker": "Tushar", "text": "Okay."}}]}}
 
-Example (Hinglish):
+Example (Hinglish translated to English):
 Input:  [10.0s - 20.0s] Kashish: हेलो माय नेम इस कशिश ओके थैंक यू कशिश हेलो
-Output: {{"reasoning": "Kashish introduces herself, Tushar thanks her, Kashish responds. Split into 3.", "segments": [{{"start": 10.0, "end": 14.0, "speaker": "Kashish", "text": "हेलो माय नेम इस कशिश"}}, {{"start": 14.0, "end": 17.0, "speaker": "Tushar", "text": "ओके थैंक यू कशिश"}}, {{"start": 17.0, "end": 20.0, "speaker": "Kashish", "text": "हेलो"}}]}}
+Output: {{"reasoning": "Kashish introduces herself, Tushar thanks her, Kashish responds. Split into 3 and translated to English.", "segments": [{{"start": 10.0, "end": 14.0, "speaker": "Kashish", "text": "Hello, my name is Kashish."}}, {{"start": 14.0, "end": 17.0, "speaker": "Tushar", "text": "Okay, thank you Kashish."}}, {{"start": 17.0, "end": 20.0, "speaker": "Kashish", "text": "Hello."}}]}}
 """
 
     payload = {

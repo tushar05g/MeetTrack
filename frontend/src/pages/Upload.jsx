@@ -173,7 +173,7 @@ export default function Upload() {
         }
     };
 
-    const stepOrder = ['pending', 'transcribing', 'extracting', 'done'];
+    const stepOrder = ['pending', 'processing', 'extracting', 'done'];
     const currentStepIndex = stepOrder.indexOf(status);
 
     const formatFileSize = (bytes) => {
@@ -685,7 +685,7 @@ export default function Upload() {
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                                     {[
                                         { id: 'pending', label: 'Queued in Processing Pipeline', icon: Hourglass },
-                                        { id: 'transcribing', label: 'Transcribing & Voice Diarization', icon: Mic },
+                                        { id: 'processing', label: 'Transcribing & Voice Diarization', icon: Mic },
                                         { id: 'extracting', label: 'Extracting Action Items & Insights', icon: Wand2 },
                                         { id: 'done', label: 'Processing Finalized', icon: CheckCircle2 }
                                     ].map((step, idx) => {

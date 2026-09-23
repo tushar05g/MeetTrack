@@ -40,7 +40,7 @@ services:
   worker:
     build: .
     entrypoint: []
-    command: ["celery", "-A", "app.worker", "worker", "-B", "--loglevel=info", "--concurrency=1"]
+    command: ["celery", "-A", "app.worker", "worker", "-B", "--loglevel=info", "--concurrency=4"]
     env_file:
       - .env
     environment:

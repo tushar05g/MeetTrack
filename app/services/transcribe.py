@@ -1,4 +1,5 @@
 import os
+import subprocess
 import requests
 import time
 import json
@@ -35,9 +36,37 @@ def transcribe_audio(audio_path, model_size="default", compute_type="default"):
     unique_dom_names = list(set(ev["name"] for ev in dom_events)) if dom_events else []
     speakers_expected = len(unique_dom_names) if len(unique_dom_names) >= 2 else None
 
-    print(f"Uploading audio {audio_path} to AssemblyAI...")
+    # 1. Pre-convert to 16kHz mono WAV for best transcription accuracy
+    wav_path = audio_path.rsplit(".", 1)[0] + "_converted.wav"
+    try:
+        print(f"Converting {audio_path} to 16kHz mono WAV for optimal accuracy...")
+        result = subprocess.run(
+            [
+                "ffmpeg", "-y",           # -y = overwrite if exists
+                "-i", audio_path,
+                "-ac", "1",               # mono channel
+                "-ar", "16000",           # 16kHz sample rate
+                "-acodec", "pcm_s16le",   # 16-bit PCM (uncompressed)
+                wav_path
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120
+        )
+        if result.returncode != 0:
+            print(f"ffmpeg conversion failed: {result.stderr}")
+            print("Falling back to original file.")
+            wav_path = audio_path
+        else:
+            print(f"Conversion successful -> {wav_path}")
+    except Exception as conv_err:
+        print(f"ffmpeg not available or errored ({conv_err}), using original file.")
+        wav_path = audio_path
 
-    # 1. Upload the file
+    upload_path = wav_path
+    print(f"Uploading audio {upload_path} to AssemblyAI...")
+
+    # 2. Upload the file
     def read_file(path, chunk_size=5242880):
         with open(path, 'rb') as _file:
             while True:
@@ -49,8 +78,13 @@ def transcribe_audio(audio_path, model_size="default", compute_type="default"):
     upload_response = requests.post(
         f"{ASSEMBLYAI_API_URL}/upload",
         headers=headers,
-        data=read_file(audio_path)
+        data=read_file(upload_path)
     )
+
+    # Clean up temp WAV file to save disk space
+    if wav_path != audio_path and os.path.exists(wav_path):
+        os.remove(wav_path)
+        print(f"Cleaned up temp file: {wav_path}")
 
     if upload_response.status_code != 200:
         print(f"AssemblyAI Upload Error: {upload_response.text}")
@@ -64,10 +98,10 @@ def transcribe_audio(audio_path, model_size="default", compute_type="default"):
         "audio_url": upload_url,
         "speaker_labels": True,
         "language_detection": True,
-        "speech_model": "best",       # Use Conformer-2 (highest accuracy)
-        "punctuate": True,            # Clean punctuation for better LLM reading
-        "format_text": True,          # Normalized casing and formatting
-        "disfluencies": False,        # Remove um/uh filler words
+        "speech_models": ["universal-2", "universal-3-5-pro"],  # universal-2 is more lenient, fallback to pro
+        "punctuate": True,
+        "format_text": True,
+        "disfluencies": False,
     }
 
     # Tell AssemblyAI how many speakers to expect — biggest single accuracy boost

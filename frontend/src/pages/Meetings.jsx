@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api';
 import { UploadCloud, Search, Calendar, Clock, Video, ArrowRight, Filter } from 'lucide-react';
@@ -149,9 +149,14 @@ export default function Meetings() {
                                     </Link>
                                 </td>
                                 <td>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', color: 'var(--text-secondary)', fontSize: '0.86rem' }}>
-                                        <Calendar size={14} style={{ color: 'var(--text-muted)' }} />
-                                        <span>{new Date(meeting.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', color: 'var(--text-secondary)', fontSize: '0.86rem' }}>
+                                            <Calendar size={14} style={{ color: 'var(--text-muted)' }} />
+                                            <span>{new Date(meeting.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                                        </div>
+                                        <div style={{ fontSize: '0.8rem', opacity: 0.8, paddingLeft: '1.35rem', color: 'var(--text-secondary)' }}>
+                                            {new Date(meeting.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                        </div>
                                     </div>
                                 </td>
                                 <td>
