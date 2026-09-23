@@ -90,7 +90,7 @@ def auth_google_calendar(token: str = Query(...), redirect_to: str = Query("http
     state_data = {"user_id": user.id, "redirect_to": redirect_to}
     state_str = base64.b64encode(json.dumps(state_data).encode()).decode()
 
-    redirect_uri = f"{redirect_to.rstrip('/')}/api/calendar/callback"
+    redirect_uri = os.getenv("GOOGLE_REDIRECT_URI") or f"{redirect_to.rstrip('/')}/api/calendar/callback"
 
     params = {
         "client_id": os.getenv("GOOGLE_CLIENT_ID"),
@@ -121,7 +121,7 @@ def calendar_callback(code: str, state: str, db: Session = Depends(get_db)):
             "code": code,
             "client_id": os.getenv("GOOGLE_CLIENT_ID"),
             "client_secret": os.getenv("GOOGLE_CLIENT_SECRET"),
-            "redirect_uri": f"{frontend_url.rstrip('/')}/api/calendar/callback",
+            "redirect_uri": os.getenv("GOOGLE_REDIRECT_URI") or f"{frontend_url.rstrip('/')}/api/calendar/callback",
             "grant_type": "authorization_code"
         }
         resp = requests.post("https://oauth2.googleapis.com/token", data=data)
