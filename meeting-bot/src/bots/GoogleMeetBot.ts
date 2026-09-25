@@ -597,6 +597,20 @@ export class GoogleMeetBot extends MeetBotBase {
 
     // Dismiss "Microphone not found" and "Camera not found" notifications if present
     try {
+      this._logger.info('Turning on Closed Captions (CC)...');
+      // Look for the "Turn on captions" button or "Turn on captions (c)"
+      const ccButton = await this.page.locator('button[aria-label*="urn on caption"], button[aria-label*="urn on Caption"]').first();
+      if (ccButton) {
+        await ccButton.click({ timeout: 5000 });
+        this._logger.info('Successfully clicked the CC button!');
+      } else {
+        this._logger.warn('Could not find the CC button.');
+      }
+    } catch (e) {
+      this._logger.warn('Error clicking CC button', e);
+    }
+
+    try {
       this._logger.info('Checking for device notifications (microphone/camera)...');
       const hasDeviceNotification = await this.page.evaluate(() => {
         return document.body.innerText.includes('Microphone not found') ||
@@ -774,62 +788,35 @@ export class GoogleMeetBot extends MeetBotBase {
           const recordingStartedAt = Date.now();
           const initialAloneGraceMs = activateInactivityDetectionAfterMinutes * 60 * 1000;
 
-          // DOM Scraper for Active Speaker
+          // DOM Scraper for Closed Captions
           let lastActiveSpeaker = "";
-          const speakerScraperInterval = setInterval(() => {
+          const speakerScraperInterval = setInterval(async () => {
             try {
-              // In Google Meet, the active speaker usually has the speaking animation icon or is in the main spotlight
-              // We check for the data-self-name attribute of the element that has the speaking animation
-              // A common heuristic is looking for the blue volume indicator or specific classes
-              const speakerIndicators = document.querySelectorAll('[data-is-muted="false"]');
+              // Google Meet puts the speaker name inside a div with the actual caption text.
+              // Instead of relying on random obfuscated CSS classes, we just look for images (avatars)
+              // inside the main caption container, and the adjacent text is the name!
+              // Since we just need the NAME of who is actively getting captioned right now:
               
-              let foundSpeaker = "";
+              const foundSpeakers = new Set<string>();
               
-              // 1. Look for speaking waves (Google Meet active speaker indicator)
-              const speakingWaves = document.querySelectorAll('.I98jWb, .Jqx50b, [class*="speaking"]');
-              if (speakingWaves.length > 0) {
-                const waveElement = speakingWaves[0];
-                const container = waveElement.closest('div[data-participant-id], div[data-requested-participant-id]');
-                if (container) {
-                   // The name is usually a text node inside the container
-                   foundSpeaker = (container as HTMLElement).innerText?.trim().split('\n')[0] || "";
-                }
+              const captionImages = document.querySelectorAll('img[src*="googleusercontent"]');
+              for (let i = 0; i < captionImages.length; i++) {
+                 const img = captionImages[i];
+                 const parent = img.parentElement?.parentElement;
+                 if (parent && parent.innerText && parent.innerText.length > 0 && parent.innerText.length < 50) {
+                     // The text next to the avatar in the CC box is the speaker's name!
+                     const name = parent.innerText.trim().split('\n')[0];
+                     if (name) foundSpeakers.add(name);
+                 }
               }
 
-              // 2. Look for anyone who is unmuted (has mic on)
-              if (!foundSpeaker) {
-                  const allTiles = document.querySelectorAll('div[data-participant-id], div[data-requested-participant-id]');
-                  for (let i = 0; i < allTiles.length; i++) {
-                      const tile = allTiles[i];
-                      const isMuted = tile.querySelector('[data-is-muted="true"]') !== null;
-                      if (!isMuted) {
-                          // Unmuted participant found!
-                          const name = (tile as HTMLElement).innerText?.trim().split('\n')[0];
-                          if (name && name.length > 0 && name.length < 50) {
-                              foundSpeaker = name;
-                              break;
-                          }
-                      }
-                  }
-              }
-
-              // 3. Absolute fallback: Just get the first name on the screen that isn't the bot
-              if (!foundSpeaker) {
-                  const allTiles = document.querySelectorAll('div[data-participant-id], div[data-requested-participant-id]');
-                  for (let i = 0; i < allTiles.length; i++) {
-                      const name = (allTiles[i] as HTMLElement).innerText?.trim().split('\n')[0];
-                      if (name && name.length > 0 && name.length < 50 && !name.toLowerCase().includes("bot")) {
-                          foundSpeaker = name;
-                          break;
-                      }
-                  }
-              }
-
-              // Always emit if we found someone, so we at least populate the JSON
-              if (foundSpeaker) {
-                lastActiveSpeaker = foundSpeaker;
+              // Emit all found speakers for this exact second
+              if (foundSpeakers.size > 0) {
                 const timestampSecs = Math.round((Date.now() - recordingStartedAt) / 1000);
-                (window as any).screenAppLogSpeaker(slightlySecretId, foundSpeaker, timestampSecs);
+                foundSpeakers.forEach(speaker => {
+                    lastActiveSpeaker = speaker;
+                    (window as any).screenAppLogSpeaker(slightlySecretId, speaker, timestampSecs);
+                });
               }
             } catch (e) {
               console.error("DOM Scraper error:", e);

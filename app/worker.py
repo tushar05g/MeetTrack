@@ -100,6 +100,22 @@ def process_meeting(self, meeting_id: int):
         meeting.status = MeetingStatus.processing
         db.commit()
 
+        # Convert webm to wav if necessary (Pyannote crashes on webm containers)
+        if meeting.audio_file_path.endswith(".webm"):
+            import subprocess
+            wav_path = meeting.audio_file_path.replace(".webm", ".wav")
+            if not os.path.exists(wav_path):
+                print(f"Converting {meeting.audio_file_path} to {wav_path} via ffmpeg...")
+                subprocess.run(["ffmpeg", "-y", "-i", meeting.audio_file_path, "-ac", "1", "-ar", "16000", wav_path], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            meeting.audio_file_path = wav_path
+            db.commit()
+
+        # Delete any existing transcript from a previous run to avoid duplicates
+        existing_transcript = db.query(Transcript).filter(Transcript.meeting_id == meeting.id).first()
+        if existing_transcript:
+            db.delete(existing_transcript)
+            db.commit()
+
         # Step 1: Transcribe (Always run Whisper to get multilingual raw text)
         print("[STEP 1] Transcribing audio...")
         raw_segments = transcribe_audio(meeting.audio_file_path)
@@ -113,7 +129,7 @@ def process_meeting(self, meeting_id: int):
             return
 
         # Load CC data if this was a bot meeting
-        output_json = os.path.join(os.path.dirname(os.path.dirname(__file__)), "app", "uploads", f"bot_meeting_{meeting.id}.json")
+        output_json = os.path.join(os.path.dirname(os.path.dirname(__file__)), "app", "uploads", f"bot_meeting_{meeting.id}_speakers.json")
         bot_transcript_data = None
         bot_participants = None
         
@@ -123,7 +139,7 @@ def process_meeting(self, meeting_id: int):
                     data = json.load(f)
                     if data and isinstance(data, list) and isinstance(data[0], dict):
                         bot_transcript_data = data
-                        bot_participants = ", ".join(list(set(d.get('speaker', 'Unknown') for d in data)))
+                        bot_participants = ", ".join(list(set(d.get('name', 'Unknown') for d in data)))
             except Exception as e:
                 print(f"Error loading bot JSON: {e}")
 
@@ -141,41 +157,37 @@ def process_meeting(self, meeting_id: int):
 
         # Step 3: Tri-Factor Name Mapping
         if bot_transcript_data:
-            print("[STEP 3] Live CC transcript found! Mapping Pyannote acoustic labels to CC names via time-overlap voting...")
+            print("[STEP 3] Live CC transcript found! Mapping Pyannote acoustic labels to CC names per-segment with fallback...")
             
-            speaker_votes = {}
-            
-            # Vote: Match Pyannote segments to CC segments
+            # 1. Calculate global votes to use as a fallback if a segment is missing CC
+            global_speaker_votes = {}
             for d_seg in diarized_segments:
                 py_speaker = d_seg.get('speaker', 'SPEAKER_00')
                 d_start = d_seg.get('start', 0)
                 d_end = d_seg.get('end', 0)
                 
                 for c_seg in bot_transcript_data:
-                    c_start = c_seg.get('start', 0)
-                    c_end = c_seg.get('end', 0)
+                    # Google Meet bot outputs {"name": "User", "timestamp": 12}
+                    c_time = c_seg.get('timestamp', 0)
                     
-                    overlap = max(0, min(d_end, c_end) - max(d_start, c_start))
-                    if overlap > 0.5: # Require at least 0.5s overlap for a vote
-                        cc_speaker = c_seg.get('speaker', 'Unknown')
-                        if py_speaker not in speaker_votes:
-                            speaker_votes[py_speaker] = {}
-                        speaker_votes[py_speaker][cc_speaker] = speaker_votes[py_speaker].get(cc_speaker, 0) + overlap
+                    # If this CC timestamp falls within the audio segment
+                    if d_start <= c_time <= d_end:
+                        cc_speaker = c_seg.get('name', 'Unknown')
+                        if py_speaker not in global_speaker_votes:
+                            global_speaker_votes[py_speaker] = {}
+                        global_speaker_votes[py_speaker][cc_speaker] = global_speaker_votes[py_speaker].get(cc_speaker, 0) + 1
             
-            # Resolve votes
-            final_mapping = {}
-            for py_spk, votes in speaker_votes.items():
+            # Resolve global fallback mapping
+            global_mapping = {}
+            for py_spk, votes in global_speaker_votes.items():
                 if votes:
-                    # Pick the CC name that had the most overlap time with this Pyannote label
-                    best_cc_spk = max(votes, key=votes.get)
-                    final_mapping[py_spk] = best_cc_spk
-                    print(f"Mapped {py_spk} -> {best_cc_spk}")
+                    global_mapping[py_spk] = max(votes, key=votes.get)
             
-            # Apply mapping to ALL segments
+            # 2. Apply mapping globally to all segments
             for d_seg in diarized_segments:
                 py_speaker = d_seg.get('speaker', 'SPEAKER_00')
-                if py_speaker in final_mapping:
-                    d_seg['speaker'] = final_mapping[py_speaker]
+                if py_speaker in global_mapping:
+                    d_seg['speaker'] = global_mapping[py_speaker]
 
         # Normalize segments — guard against missing keys
         full_text = "\n".join([

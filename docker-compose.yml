@@ -40,7 +40,7 @@ services:
   worker:
     build: .
     entrypoint: []
-    command: ["celery", "-A", "app.worker", "worker", "-B", "--loglevel=info", "--concurrency=4"]
+    command: ["bash", "-c", "pip uninstall -y torchvision || true && celery -A app.worker worker -B --loglevel=info --concurrency=4"]
     env_file:
       - .env
     environment:
@@ -52,6 +52,13 @@ services:
     depends_on:
       - db
       - redis
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
 
 
   meeting-bot:

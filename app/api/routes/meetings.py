@@ -72,20 +72,33 @@ def join_live_meeting(
     if scheduled_time:
         parsed_time = datetime.fromisoformat(scheduled_time.replace('Z', '+00:00').split('.')[0])
         
-    meeting = Meeting(
-        title=f"Live Meeting: {meet_url.split('/')[-1]}",
-        audio_file_path="", 
-        status=MeetingStatus.scheduled if parsed_time else MeetingStatus.pending,
-        scheduled_time=parsed_time,
-        meet_url=meet_url,
-        bot_duration=None,
-        bot_email=bot_email,
-        bot_password=bot_password,
-        owner_id=current_user.id
-    )
-    db.add(meeting)
-    db.commit()
-    db.refresh(meeting)
+    # Check if a meeting with this URL already exists (e.g. from calendar sync)
+    meeting = db.query(Meeting).filter(Meeting.meet_url == meet_url).first()
+    
+    if meeting:
+        # Reuse existing meeting
+        meeting.status = MeetingStatus.scheduled if parsed_time else MeetingStatus.pending
+        if parsed_time:
+            meeting.scheduled_time = parsed_time
+        meeting.bot_email = bot_email
+        meeting.bot_password = bot_password
+        db.commit()
+    else:
+        # Create new meeting
+        meeting = Meeting(
+            title=f"Live Meeting: {meet_url.split('/')[-1]}",
+            audio_file_path="", 
+            status=MeetingStatus.scheduled if parsed_time else MeetingStatus.pending,
+            scheduled_time=parsed_time,
+            meet_url=meet_url,
+            bot_duration=None,
+            bot_email=bot_email,
+            bot_password=bot_password,
+            owner_id=current_user.id
+        )
+        db.add(meeting)
+        db.commit()
+        db.refresh(meeting)
 
     # Process CSV if provided
     parse_participants_csv(db, meeting.id, participants_csv)
@@ -245,7 +258,8 @@ def list_meetings(db: Session = Depends(get_db), current_user: User = Depends(ge
             "id": m.id,
             "title": m.title,
             "status": m.status.value,
-            "created_at": m.created_at.isoformat() + "Z" if m.created_at else None
+            "created_at": m.created_at.isoformat() + "Z" if m.created_at else None,
+            "scheduled_time": m.scheduled_time.isoformat() + "Z" if m.scheduled_time else None
         } for m in meetings
     ]
 

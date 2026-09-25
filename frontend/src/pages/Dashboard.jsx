@@ -225,7 +225,10 @@ export default function Dashboard() {
                                         </div>
                                     </td>
                                 </tr>
-                            ) : meetings.map(meeting => (
+                            ) : meetings.map(meeting => {
+                                const displayTimeStr = meeting.scheduled_time || meeting.created_at;
+                                const formattedDate = new Date(displayTimeStr.replace(' ', 'T') + (displayTimeStr.endsWith('Z') ? '' : 'Z'));
+                                return (
                                 <tr key={meeting.id}>
                                     <td style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
@@ -239,10 +242,10 @@ export default function Dashboard() {
                                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.86rem' }}>
                                                 <Clock size={13} style={{ color: 'var(--text-muted)' }} />
-                                                <span>{new Date(meeting.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                                                <span>{formattedDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>
                                             </div>
                                             <div style={{ fontSize: '0.8rem', opacity: 0.8, paddingLeft: '1.2rem' }}>
-                                                {new Date(meeting.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                                {formattedDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
                                             </div>
                                         </div>
                                     </td>
@@ -262,7 +265,8 @@ export default function Dashboard() {
                                         </Link>
                                     </td>
                                 </tr>
-                            ))}
+                                );
+                            })}
                         </tbody>
                     </table>
                 </div>

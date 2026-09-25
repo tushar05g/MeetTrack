@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM pytorch/pytorch:2.2.1-cuda12.1-cudnn8-runtime
 
 # Install system dependencies
 # - ffmpeg is required for audio processing
@@ -10,9 +10,9 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy and install LIGHT requirements (API, Celery, etc.)
-COPY requirements-light.txt .
-RUN pip install --default-timeout=1000 --no-cache-dir -r requirements-light.txt
+# Copy and install HEAVY requirements (API, Celery, AI Models, etc.)
+COPY requirements-heavy.txt .
+RUN pip install --default-timeout=1000 --no-cache-dir -r requirements-heavy.txt
 
 # Copy the rest of the application
 COPY . .

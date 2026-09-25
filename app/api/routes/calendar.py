@@ -189,25 +189,34 @@ def fetch_upcoming_meeting(db: Session = Depends(get_db), current_user: User = D
         
         bot_invited = invite_bot_to_event(service, event_id)
         
-        meeting = Meeting(
-            title=f"Calendar Sync: {target_event.get('summary', 'Untitled')}",
-            audio_file_path="", 
-            status=MeetingStatus.pending,
-            owner_id=current_user.id
-        )
-        db.add(meeting)
-        db.commit()
-        db.refresh(meeting)
-        
+        meeting = db.query(Meeting).filter(Meeting.meet_url == meet_url).first()
         saved_attendees = []
-        for attendee in attendees:
-            email = attendee.get('email', '')
-            name = attendee.get('displayName', email.split('@')[0])
-            if email and email != BOT_EMAIL:
-                mp = MeetingParticipant(meeting_id=meeting.id, name=name, email=email)
-                db.add(mp)
-                saved_attendees.append({"name": name, "email": email})
-        db.commit()
+        
+        if not meeting:
+            meeting = Meeting(
+                title=target_event.get('summary', 'Untitled Meeting'),
+                meet_url=meet_url,
+                audio_file_path="", 
+                status=MeetingStatus.pending,
+                owner_id=current_user.id
+            )
+            db.add(meeting)
+            db.commit()
+            db.refresh(meeting)
+            
+            for attendee in attendees:
+                email = attendee.get('email', '')
+                name = attendee.get('displayName', email.split('@')[0])
+                if email and email != BOT_EMAIL:
+                    mp = MeetingParticipant(meeting_id=meeting.id, name=name, email=email)
+                    db.add(mp)
+                    saved_attendees.append({"name": name, "email": email})
+            db.commit()
+        else:
+            for p in meeting.participants:
+                saved_attendees.append({"name": p.name, "email": p.email})
+            
+        # Return success regardless
         
         return {
             "status": "ok",
